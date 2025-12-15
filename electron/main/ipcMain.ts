@@ -10,6 +10,7 @@ import { registerWindowHandlers } from './ipc/window'
 import { registerChatHandlers } from './ipc/chat'
 import { registerMergeHandlers, initMergeModule } from './ipc/merge'
 import { registerAIHandlers } from './ipc/ai'
+import { registerMessagesHandlers } from './ipc/messages'
 import { registerCacheHandlers } from './ipc/cache'
 // 导入 Worker 模块（用于异步分析查询和流式导入）
 import * as worker from './worker/workerManager'
@@ -39,6 +40,7 @@ const mainIpcMain = (win: BrowserWindow) => {
   registerChatHandlers(context)
   registerMergeHandlers(context)
   registerAIHandlers(context)
+  registerMessagesHandlers(context)
   registerCacheHandlers(context)
 
   console.log('[IpcMain] All IPC handlers registered successfully')

@@ -436,6 +436,34 @@ export async function getConversationBetween(
   return sendToWorker('getConversationBetween', { sessionId, memberId1, memberId2, filter, limit })
 }
 
+/**
+ * 获取指定消息之前的 N 条消息（用于向上无限滚动）
+ */
+export async function getMessagesBefore(
+  sessionId: string,
+  beforeId: number,
+  limit?: number,
+  filter?: any,
+  senderId?: number,
+  keywords?: string[]
+): Promise<{ messages: SearchMessageResult[]; hasMore: boolean }> {
+  return sendToWorker('getMessagesBefore', { sessionId, beforeId, limit, filter, senderId, keywords })
+}
+
+/**
+ * 获取指定消息之后的 N 条消息（用于向下无限滚动）
+ */
+export async function getMessagesAfter(
+  sessionId: string,
+  afterId: number,
+  limit?: number,
+  filter?: any,
+  senderId?: number,
+  keywords?: string[]
+): Promise<{ messages: SearchMessageResult[]; hasMore: boolean }> {
+  return sendToWorker('getMessagesAfter', { sessionId, afterId, limit, filter, senderId, keywords })
+}
+
 // ==================== SQL 实验室 API ====================
 
 export interface SQLResult {

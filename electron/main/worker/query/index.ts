@@ -36,8 +36,18 @@ export {
   getLaughAnalysis,
 } from './advanced'
 
-// AI 查询
-export { searchMessages, getMessageContext, getRecentMessages, getConversationBetween } from './ai'
+// 聊天记录查询
+export {
+  searchMessages,
+  getMessageContext,
+  getRecentMessages,
+  getConversationBetween,
+  getMessagesBefore,
+  getMessagesAfter,
+} from './messages'
+
+// 聊天记录查询类型
+export type { MessageResult, PaginatedMessages, MessagesWithTotal } from './messages'
 
 // SQL 实验室
 export { executeRawSQL, getSchema } from './sql'

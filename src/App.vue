@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 import Sidebar from '@/components/common/Sidebar.vue'
 import SettingModal from '@/components/common/SettingModal.vue'
 import ScreenCaptureModal from '@/components/common/ScreenCaptureModal.vue'
+import { ChatRecordDrawer } from '@/components/common/ChatRecord'
 
 const chatStore = useChatStore()
 const { isInitialized } = storeToRefs(chatStore)
@@ -49,6 +50,8 @@ onMounted(async () => {
       :image-data="chatStore.screenCaptureImage"
       @update:open="(v) => (v ? null : chatStore.closeScreenCaptureModal())"
     />
+    <!-- 全局聊天记录查看器 -->
+    <ChatRecordDrawer />
   </UApp>
 </template>
 

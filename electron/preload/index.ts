@@ -445,22 +445,81 @@ interface AIMessage {
 const aiApi = {
   /**
    * 搜索消息（关键词搜索）
+   * @param senderId 可选的发送者成员 ID，用于筛选特定成员的消息
    */
   searchMessages: (
     sessionId: string,
     keywords: string[],
     filter?: { startTs?: number; endTs?: number },
     limit?: number,
-    offset?: number
+    offset?: number,
+    senderId?: number
   ): Promise<{ messages: SearchMessageResult[]; total: number }> => {
-    return ipcRenderer.invoke('ai:searchMessages', sessionId, keywords, filter, limit, offset)
+    return ipcRenderer.invoke('ai:searchMessages', sessionId, keywords, filter, limit, offset, senderId)
   },
 
   /**
    * 获取消息上下文
+   * @param messageIds 支持单个或批量消息 ID
    */
-  getMessageContext: (sessionId: string, messageId: number, contextSize?: number): Promise<SearchMessageResult[]> => {
-    return ipcRenderer.invoke('ai:getMessageContext', sessionId, messageId, contextSize)
+  getMessageContext: (
+    sessionId: string,
+    messageIds: number | number[],
+    contextSize?: number
+  ): Promise<SearchMessageResult[]> => {
+    return ipcRenderer.invoke('ai:getMessageContext', sessionId, messageIds, contextSize)
+  },
+
+  /**
+   * 获取最近消息
+   */
+  getRecentMessages: (
+    sessionId: string,
+    filter?: { startTs?: number; endTs?: number },
+    limit?: number
+  ): Promise<{ messages: SearchMessageResult[]; total: number }> => {
+    return ipcRenderer.invoke('ai:getRecentMessages', sessionId, filter, limit)
+  },
+
+  /**
+   * 获取两人之间的对话
+   */
+  getConversationBetween: (
+    sessionId: string,
+    memberId1: number,
+    memberId2: number,
+    filter?: { startTs?: number; endTs?: number },
+    limit?: number
+  ): Promise<{ messages: SearchMessageResult[]; total: number; member1Name: string; member2Name: string }> => {
+    return ipcRenderer.invoke('ai:getConversationBetween', sessionId, memberId1, memberId2, filter, limit)
+  },
+
+  /**
+   * 获取指定消息之前的 N 条（用于向上无限滚动）
+   */
+  getMessagesBefore: (
+    sessionId: string,
+    beforeId: number,
+    limit?: number,
+    filter?: { startTs?: number; endTs?: number },
+    senderId?: number,
+    keywords?: string[]
+  ): Promise<{ messages: SearchMessageResult[]; hasMore: boolean }> => {
+    return ipcRenderer.invoke('ai:getMessagesBefore', sessionId, beforeId, limit, filter, senderId, keywords)
+  },
+
+  /**
+   * 获取指定消息之后的 N 条（用于向下无限滚动）
+   */
+  getMessagesAfter: (
+    sessionId: string,
+    afterId: number,
+    limit?: number,
+    filter?: { startTs?: number; endTs?: number },
+    senderId?: number,
+    keywords?: string[]
+  ): Promise<{ messages: SearchMessageResult[]; hasMore: boolean }> => {
+    return ipcRenderer.invoke('ai:getMessagesAfter', sessionId, afterId, limit, filter, senderId, keywords)
   },
 
   /**

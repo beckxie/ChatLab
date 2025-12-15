@@ -1,16 +1,17 @@
 /**
- * AI 查询模块
- * 提供关键词搜索和最近消息获取功能（在 Worker 线程中执行）
+ * 聊天记录查询模块
+ * 提供通用的消息查询功能：搜索、筛选、上下文、无限滚动等
+ * 在 Worker 线程中执行
  */
 
 import { openDatabase, buildTimeFilter, type TimeFilter } from '../core'
 
-// ==================== 消息搜索 ====================
+// ==================== 类型定义 ====================
 
 /**
- * 搜索消息结果类型
+ * 消息查询结果类型
  */
-export interface SearchMessageResult {
+export interface MessageResult {
   id: number
   senderName: string
   senderPlatformId: string
@@ -20,7 +21,70 @@ export interface SearchMessageResult {
 }
 
 /**
- * 获取最近的消息（用于概览性问题）
+ * 分页消息结果
+ */
+export interface PaginatedMessages {
+  messages: MessageResult[]
+  hasMore: boolean
+}
+
+/**
+ * 带总数的消息结果
+ */
+export interface MessagesWithTotal {
+  messages: MessageResult[]
+  total: number
+}
+
+// ==================== 工具函数 ====================
+
+/**
+ * 将数据库行转换为可序列化的 MessageResult
+ * 处理 BigInt 等类型，确保 IPC 传输安全
+ */
+function sanitizeMessageRow(row: MessageResult): MessageResult {
+  return {
+    id: Number(row.id),
+    senderName: String(row.senderName || ''),
+    senderPlatformId: String(row.senderPlatformId || ''),
+    content: row.content != null ? String(row.content) : '',
+    timestamp: Number(row.timestamp),
+    type: Number(row.type),
+  }
+}
+
+/**
+ * 构建通用的发送者筛选条件
+ */
+function buildSenderCondition(senderId?: number): { condition: string; params: number[] } {
+  if (senderId === undefined) {
+    return { condition: '', params: [] }
+  }
+  return { condition: 'AND msg.sender_id = ?', params: [senderId] }
+}
+
+/**
+ * 构建关键词筛选条件（OR 逻辑）
+ */
+function buildKeywordCondition(keywords?: string[]): { condition: string; params: string[] } {
+  if (!keywords || keywords.length === 0) {
+    return { condition: '', params: [] }
+  }
+  const condition = `AND (${keywords.map(() => `msg.content LIKE ?`).join(' OR ')})`
+  const params = keywords.map((k) => `%${k}%`)
+  return { condition, params }
+}
+
+// 排除系统消息的通用过滤条件
+const SYSTEM_FILTER = "AND COALESCE(m.account_name, '') != '系统消息'"
+
+// 只获取文本消息的过滤条件
+const TEXT_ONLY_FILTER = 'AND msg.type = 0 AND msg.content IS NOT NULL AND msg.content != \'\''
+
+// ==================== 查询函数 ====================
+
+/**
+ * 获取最近的消息
  * @param sessionId 会话 ID
  * @param filter 时间过滤器
  * @param limit 返回数量限制
@@ -29,16 +93,13 @@ export function getRecentMessages(
   sessionId: string,
   filter?: TimeFilter,
   limit: number = 100
-): { messages: SearchMessageResult[]; total: number } {
+): MessagesWithTotal {
   const db = openDatabase(sessionId)
   if (!db) return { messages: [], total: 0 }
 
   // 构建时间过滤条件
   const { clause: timeClause, params: timeParams } = buildTimeFilter(filter)
   const timeCondition = timeClause ? timeClause.replace('WHERE', 'AND') : ''
-
-  // 排除系统消息，只获取文本消息（type=0）
-  const systemFilter = "AND COALESCE(m.account_name, '') != '系统消息' AND msg.type = 0 AND msg.content IS NOT NULL AND msg.content != ''"
 
   // 查询总数
   const countSql = `
@@ -47,7 +108,8 @@ export function getRecentMessages(
     JOIN member m ON msg.sender_id = m.id
     WHERE 1=1
     ${timeCondition}
-    ${systemFilter}
+    ${SYSTEM_FILTER}
+    ${TEXT_ONLY_FILTER}
   `
   const totalRow = db.prepare(countSql).get(...timeParams) as { total: number }
   const total = totalRow?.total || 0
@@ -65,15 +127,19 @@ export function getRecentMessages(
     JOIN member m ON msg.sender_id = m.id
     WHERE 1=1
     ${timeCondition}
-    ${systemFilter}
+    ${SYSTEM_FILTER}
+    ${TEXT_ONLY_FILTER}
     ORDER BY msg.ts DESC
     LIMIT ?
   `
 
-  const rows = db.prepare(sql).all(...timeParams, limit) as SearchMessageResult[]
+  const rows = db.prepare(sql).all(...timeParams, limit) as MessageResult[]
 
   // 返回时按时间正序排列（便于阅读）
-  return { messages: rows.reverse(), total }
+  return {
+    messages: rows.map(sanitizeMessageRow).reverse(),
+    total,
+  }
 }
 
 /**
@@ -83,7 +149,7 @@ export function getRecentMessages(
  * @param filter 时间过滤器
  * @param limit 返回数量限制
  * @param offset 偏移量（分页）
- * @param senderId 可选的发送者成员 ID，用于筛选特定成员的消息
+ * @param senderId 可选的发送者成员 ID
  */
 export function searchMessages(
   sessionId: string,
@@ -92,7 +158,7 @@ export function searchMessages(
   limit: number = 20,
   offset: number = 0,
   senderId?: number
-): { messages: SearchMessageResult[]; total: number } {
+): MessagesWithTotal {
   const db = openDatabase(sessionId)
   if (!db) return { messages: [], total: 0 }
 
@@ -108,16 +174,8 @@ export function searchMessages(
   const { clause: timeClause, params: timeParams } = buildTimeFilter(filter)
   const timeCondition = timeClause ? timeClause.replace('WHERE', 'AND') : ''
 
-  // 排除系统消息
-  const systemFilter = "AND COALESCE(m.account_name, '') != '系统消息'"
-
   // 构建发送者筛选条件
-  let senderCondition = ''
-  const senderParams: number[] = []
-  if (senderId !== undefined) {
-    senderCondition = 'AND msg.sender_id = ?'
-    senderParams.push(senderId)
-  }
+  const { condition: senderCondition, params: senderParams } = buildSenderCondition(senderId)
 
   // 查询总数
   const countSql = `
@@ -126,7 +184,7 @@ export function searchMessages(
     JOIN member m ON msg.sender_id = m.id
     WHERE ${keywordCondition}
     ${timeCondition}
-    ${systemFilter}
+    ${SYSTEM_FILTER}
     ${senderCondition}
   `
   const totalRow = db.prepare(countSql).get(...keywordParams, ...timeParams, ...senderParams) as { total: number }
@@ -145,15 +203,18 @@ export function searchMessages(
     JOIN member m ON msg.sender_id = m.id
     WHERE ${keywordCondition}
     ${timeCondition}
-    ${systemFilter}
+    ${SYSTEM_FILTER}
     ${senderCondition}
     ORDER BY msg.ts DESC
     LIMIT ? OFFSET ?
   `
 
-  const rows = db.prepare(sql).all(...keywordParams, ...timeParams, ...senderParams, limit, offset) as SearchMessageResult[]
+  const rows = db.prepare(sql).all(...keywordParams, ...timeParams, ...senderParams, limit, offset) as MessageResult[]
 
-  return { messages: rows, total }
+  return {
+    messages: rows.map(sanitizeMessageRow),
+    total,
+  }
 }
 
 /**
@@ -168,7 +229,7 @@ export function getMessageContext(
   sessionId: string,
   messageIds: number | number[],
   contextSize: number = 20
-): SearchMessageResult[] {
+): MessageResult[] {
   const db = openDatabase(sessionId)
   if (!db) return []
 
@@ -225,9 +286,130 @@ export function getMessageContext(
     ORDER BY msg.id ASC
   `
 
-  const rows = db.prepare(sql).all(...idList) as SearchMessageResult[]
+  const rows = db.prepare(sql).all(...idList) as MessageResult[]
 
-  return rows
+  return rows.map(sanitizeMessageRow)
+}
+
+/**
+ * 获取指定消息之前的 N 条消息（用于向上无限滚动）
+ * @param sessionId 会话 ID
+ * @param beforeId 在此消息 ID 之前的消息
+ * @param limit 返回数量限制
+ * @param filter 可选的时间筛选条件
+ * @param senderId 可选的发送者筛选
+ * @param keywords 可选的关键词筛选
+ */
+export function getMessagesBefore(
+  sessionId: string,
+  beforeId: number,
+  limit: number = 50,
+  filter?: TimeFilter,
+  senderId?: number,
+  keywords?: string[]
+): PaginatedMessages {
+  const db = openDatabase(sessionId)
+  if (!db) return { messages: [], hasMore: false }
+
+  // 构建时间过滤条件
+  const { clause: timeClause, params: timeParams } = buildTimeFilter(filter)
+  const timeCondition = timeClause ? timeClause.replace('WHERE', 'AND') : ''
+
+  // 构建关键词条件
+  const { condition: keywordCondition, params: keywordParams } = buildKeywordCondition(keywords)
+
+  // 构建发送者筛选条件
+  const { condition: senderCondition, params: senderParams } = buildSenderCondition(senderId)
+
+  const sql = `
+    SELECT
+      msg.id,
+      COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
+      m.platform_id as senderPlatformId,
+      msg.content,
+      msg.ts as timestamp,
+      msg.type
+    FROM message msg
+    JOIN member m ON msg.sender_id = m.id
+    WHERE msg.id < ?
+    ${timeCondition}
+    ${keywordCondition}
+    ${senderCondition}
+    ${SYSTEM_FILTER}
+    ORDER BY msg.id DESC
+    LIMIT ?
+  `
+
+  const rows = db.prepare(sql).all(beforeId, ...timeParams, ...keywordParams, ...senderParams, limit + 1) as MessageResult[]
+
+  const hasMore = rows.length > limit
+  const resultRows = hasMore ? rows.slice(0, limit) : rows
+
+  // 返回时按 ID 升序排列
+  return {
+    messages: resultRows.map(sanitizeMessageRow).reverse(),
+    hasMore,
+  }
+}
+
+/**
+ * 获取指定消息之后的 N 条消息（用于向下无限滚动）
+ * @param sessionId 会话 ID
+ * @param afterId 在此消息 ID 之后的消息
+ * @param limit 返回数量限制
+ * @param filter 可选的时间筛选条件
+ * @param senderId 可选的发送者筛选
+ * @param keywords 可选的关键词筛选
+ */
+export function getMessagesAfter(
+  sessionId: string,
+  afterId: number,
+  limit: number = 50,
+  filter?: TimeFilter,
+  senderId?: number,
+  keywords?: string[]
+): PaginatedMessages {
+  const db = openDatabase(sessionId)
+  if (!db) return { messages: [], hasMore: false }
+
+  // 构建时间过滤条件
+  const { clause: timeClause, params: timeParams } = buildTimeFilter(filter)
+  const timeCondition = timeClause ? timeClause.replace('WHERE', 'AND') : ''
+
+  // 构建关键词条件
+  const { condition: keywordCondition, params: keywordParams } = buildKeywordCondition(keywords)
+
+  // 构建发送者筛选条件
+  const { condition: senderCondition, params: senderParams } = buildSenderCondition(senderId)
+
+  const sql = `
+    SELECT
+      msg.id,
+      COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
+      m.platform_id as senderPlatformId,
+      msg.content,
+      msg.ts as timestamp,
+      msg.type
+    FROM message msg
+    JOIN member m ON msg.sender_id = m.id
+    WHERE msg.id > ?
+    ${timeCondition}
+    ${keywordCondition}
+    ${senderCondition}
+    ${SYSTEM_FILTER}
+    ORDER BY msg.id ASC
+    LIMIT ?
+  `
+
+  const rows = db.prepare(sql).all(afterId, ...timeParams, ...keywordParams, ...senderParams, limit + 1) as MessageResult[]
+
+  const hasMore = rows.length > limit
+  const resultRows = hasMore ? rows.slice(0, limit) : rows
+
+  return {
+    messages: resultRows.map(sanitizeMessageRow),
+    hasMore,
+  }
 }
 
 /**
@@ -245,7 +427,7 @@ export function getConversationBetween(
   memberId2: number,
   filter?: TimeFilter,
   limit: number = 100
-): { messages: SearchMessageResult[]; total: number; member1Name: string; member2Name: string } {
+): MessagesWithTotal & { member1Name: string; member2Name: string } {
   const db = openDatabase(sessionId)
   if (!db) return { messages: [], total: 0, member1Name: '', member2Name: '' }
 
@@ -298,11 +480,11 @@ export function getConversationBetween(
     LIMIT ?
   `
 
-  const rows = db.prepare(sql).all(memberId1, memberId2, ...timeParams, limit) as SearchMessageResult[]
+  const rows = db.prepare(sql).all(memberId1, memberId2, ...timeParams, limit) as MessageResult[]
 
   // 返回时按时间正序排列（便于阅读对话）
   return {
-    messages: rows.reverse(),
+    messages: rows.map(sanitizeMessageRow).reverse(),
     total,
     member1Name: member1.name,
     member2Name: member2.name,

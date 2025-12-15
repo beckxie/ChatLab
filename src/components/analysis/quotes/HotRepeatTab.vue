@@ -4,6 +4,7 @@ import type { RepeatAnalysis } from '@/types/chat'
 import { ListPro } from '@/components/charts'
 import { LoadingState, EmptyState, SectionCard } from '@/components/UI'
 import { formatDate, getRankBadgeClass } from '@/utils'
+import { useChatStore } from '@/stores/chat'
 
 interface TimeFilter {
   startTs?: number
@@ -14,6 +15,8 @@ const props = defineProps<{
   sessionId: string
   timeFilter?: TimeFilter
 }>()
+
+const chatStore = useChatStore()
 
 // ==================== 最火复读内容 ====================
 const repeatAnalysis = ref<RepeatAnalysis | null>(null)
@@ -34,6 +37,16 @@ async function loadRepeatAnalysis() {
 function truncateContent(content: string, maxLength = 30): string {
   if (content.length <= maxLength) return content
   return content.slice(0, maxLength) + '...'
+}
+
+/**
+ * 查看复读内容的聊天记录上下文
+ */
+function viewRepeatContext(item: { content: string; firstMessageId: number }) {
+  chatStore.openChatRecordDrawer({
+    scrollToMessageId: item.firstMessageId,
+    highlightKeywords: [item.content],
+  })
 }
 
 // 监听 sessionId 和 timeFilter 变化
@@ -81,6 +94,14 @@ watch(
             <span>{{ item.count }} 次</span>
             <span class="text-gray-300 dark:text-gray-600">|</span>
             <span>{{ formatDate(item.lastTs) }}</span>
+            <UButton
+              icon="i-heroicons-chat-bubble-left-right"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              title="查看聊天记录"
+              @click.stop="viewRepeatContext(item)"
+            />
           </div>
         </div>
       </template>

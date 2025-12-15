@@ -471,6 +471,7 @@ export interface HotRepeatContent {
   maxChainLength: number // 最长复读链长度
   originatorName: string // 最长链的原创者名称
   lastTs: number // 最近一次发生的时间戳（秒）
+  firstMessageId: number // 最长链的第一条消息 ID（用于跳转查看上下文）
 }
 
 /**
@@ -898,4 +899,43 @@ export interface MergeResult {
   outputPath?: string
   sessionId?: string // 如果选择了分析，返回会话ID
   error?: string
+}
+
+// ==================== 聊天记录查看器类型 ====================
+
+/**
+ * 聊天记录查看器查询参数
+ * 支持组合查询：多个条件可同时生效
+ */
+export interface ChatRecordQuery {
+  /** 定位到指定消息（初始加载时以此消息为中心） */
+  scrollToMessageId?: number
+
+  /** 成员筛选：只显示该成员的消息 */
+  memberId?: number
+  /** 成员名称（用于显示） */
+  memberName?: string
+
+  /** 时间范围筛选：开始时间戳（秒） */
+  startTs?: number
+  /** 时间范围筛选：结束时间戳（秒） */
+  endTs?: number
+
+  /** 关键词搜索（OR 逻辑） */
+  keywords?: string[]
+
+  /** 高亮关键词（用于 UI 高亮显示） */
+  highlightKeywords?: string[]
+}
+
+/**
+ * 聊天记录查看器中的消息项
+ */
+export interface ChatRecordMessage {
+  id: number
+  senderName: string
+  senderPlatformId: string
+  content: string
+  timestamp: number
+  type: number
 }

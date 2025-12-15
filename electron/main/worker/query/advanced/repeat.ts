@@ -70,17 +70,17 @@ export function getRepeatAnalysis(sessionId: string, filter?: TimeFilter): any {
   const chainLengthCount = new Map<number, number>()
   const contentStats = new Map<
     string,
-    { count: number; maxChainLength: number; originatorId: number; lastTs: number }
+    { count: number; maxChainLength: number; originatorId: number; lastTs: number; firstMessageId: number }
   >()
 
   let currentContent: string | null = null
-  let repeatChain: Array<{ senderId: number; content: string; ts: number }> = []
+  let repeatChain: Array<{ id: number; senderId: number; content: string; ts: number }> = []
   let totalRepeatChains = 0
   let totalChainLength = 0
 
   const fastestRepeaterStats = new Map<number, { totalDiff: number; count: number }>()
 
-  const processRepeatChain = (chain: Array<{ senderId: number; content: string; ts: number }>, breakerId?: number) => {
+  const processRepeatChain = (chain: Array<{ id: number; senderId: number; content: string; ts: number }>, breakerId?: number) => {
     if (chain.length < 3) return
 
     totalRepeatChains++
@@ -101,6 +101,7 @@ export function getRepeatAnalysis(sessionId: string, filter?: TimeFilter): any {
 
     const content = chain[0].content
     const chainTs = chain[0].ts
+    const firstMsgId = chain[0].id
     const existing = contentStats.get(content)
     if (existing) {
       existing.count++
@@ -108,9 +109,10 @@ export function getRepeatAnalysis(sessionId: string, filter?: TimeFilter): any {
       if (chainLength > existing.maxChainLength) {
         existing.maxChainLength = chainLength
         existing.originatorId = originatorId
+        existing.firstMessageId = firstMsgId
       }
     } else {
-      contentStats.set(content, { count: 1, maxChainLength: chainLength, originatorId, lastTs: chainTs })
+      contentStats.set(content, { count: 1, maxChainLength: chainLength, originatorId, lastTs: chainTs, firstMessageId: firstMsgId })
     }
 
     // 计算反应时间 (Fastest Follower)
@@ -144,13 +146,13 @@ export function getRepeatAnalysis(sessionId: string, filter?: TimeFilter): any {
     if (content === currentContent) {
       const lastSender = repeatChain[repeatChain.length - 1]?.senderId
       if (lastSender !== msg.senderId) {
-        repeatChain.push({ senderId: msg.senderId, content, ts: msg.ts })
+        repeatChain.push({ id: msg.id, senderId: msg.senderId, content, ts: msg.ts })
       }
     } else {
       processRepeatChain(repeatChain, msg.senderId)
 
       currentContent = content
-      repeatChain = [{ senderId: msg.senderId, content, ts: msg.ts }]
+      repeatChain = [{ id: msg.id, senderId: msg.senderId, content, ts: msg.ts }]
     }
   }
 
@@ -227,6 +229,7 @@ export function getRepeatAnalysis(sessionId: string, filter?: TimeFilter): any {
       maxChainLength: stats.maxChainLength,
       originatorName: originatorInfo?.name || '未知',
       lastTs: stats.lastTs,
+      firstMessageId: stats.firstMessageId,
     })
   }
   hotContents.sort((a, b) => b.maxChainLength - a.maxChainLength)

@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { AnalysisSession, ImportProgress, KeywordTemplate, PromptPreset, AIPromptSettings } from '@/types/chat'
+import type {
+  AnalysisSession,
+  ImportProgress,
+  KeywordTemplate,
+  PromptPreset,
+  AIPromptSettings,
+  ChatRecordQuery,
+} from '@/types/chat'
 import {
   BUILTIN_PRESETS,
   DEFAULT_GROUP_PRESET_ID,
@@ -257,6 +264,30 @@ export const useChatStore = defineStore(
       }, 300)
     }
 
+    // ==================== 聊天记录查看器 Drawer ====================
+    const showChatRecordDrawer = ref(false)
+    const chatRecordQuery = ref<ChatRecordQuery | null>(null)
+
+    /**
+     * 打开聊天记录查看器
+     * @param query 查询参数，支持组合查询
+     */
+    function openChatRecordDrawer(query: ChatRecordQuery) {
+      chatRecordQuery.value = query
+      showChatRecordDrawer.value = true
+    }
+
+    /**
+     * 关闭聊天记录查看器
+     */
+    function closeChatRecordDrawer() {
+      showChatRecordDrawer.value = false
+      // 延迟清除查询参数，避免关闭动画时内容闪烁
+      setTimeout(() => {
+        chatRecordQuery.value = null
+      }, 300)
+    }
+
     // AI 配置更新计数器（用于触发其他组件刷新）
     const aiConfigVersion = ref(0)
 
@@ -483,6 +514,8 @@ export const useChatStore = defineStore(
       showSettingModal,
       showScreenCaptureModal,
       screenCaptureImage,
+      showChatRecordDrawer,
+      chatRecordQuery,
       aiConfigVersion,
       aiGlobalSettings,
       customKeywordTemplates,
@@ -508,6 +541,8 @@ export const useChatStore = defineStore(
       toggleSidebar,
       openScreenCaptureModal,
       closeScreenCaptureModal,
+      openChatRecordDrawer,
+      closeChatRecordDrawer,
       notifyAIConfigChanged,
       updateAIGlobalSettings,
       addCustomKeywordTemplate,

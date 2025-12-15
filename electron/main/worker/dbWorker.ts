@@ -37,6 +37,8 @@ import {
   getMessageContext,
   getRecentMessages,
   getConversationBetween,
+  getMessagesBefore,
+  getMessagesAfter,
   // 成员管理
   getMembers,
   updateMemberAliases,
@@ -105,6 +107,8 @@ const syncHandlers: Record<string, (payload: any) => any> = {
   getMessageContext: (p) => getMessageContext(p.sessionId, p.messageIds, p.contextSize),
   getRecentMessages: (p) => getRecentMessages(p.sessionId, p.filter, p.limit),
   getConversationBetween: (p) => getConversationBetween(p.sessionId, p.memberId1, p.memberId2, p.filter, p.limit),
+  getMessagesBefore: (p) => getMessagesBefore(p.sessionId, p.beforeId, p.limit, p.filter, p.senderId, p.keywords),
+  getMessagesAfter: (p) => getMessagesAfter(p.sessionId, p.afterId, p.limit, p.filter, p.senderId, p.keywords),
 
   // SQL 实验室
   executeRawSQL: (p) => executeRawSQL(p.sessionId, p.sql),
