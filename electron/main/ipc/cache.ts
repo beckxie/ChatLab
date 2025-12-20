@@ -105,7 +105,7 @@ export function registerCacheHandlers(_context: IpcContext): void {
       {
         id: 'logs',
         name: '日志文件',
-        description: '调试日志和错误日志',
+        description: '软件的运行日志，包含导入、AI、错误等日志',
         path: path.join(chatLabDir, 'logs'),
         icon: 'i-heroicons-document-text',
         canClear: true, // 可以清理

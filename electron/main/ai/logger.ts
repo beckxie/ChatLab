@@ -20,9 +20,9 @@ function getLogDir(): string {
 
   try {
     const docPath = app.getPath('documents')
-    LOG_DIR = path.join(docPath, 'ChatLab', 'logs')
+    LOG_DIR = path.join(docPath, 'ChatLab', 'logs', 'ai')
   } catch {
-    LOG_DIR = path.join(process.cwd(), 'logs')
+    LOG_DIR = path.join(process.cwd(), 'logs', 'ai')
   }
 
   return LOG_DIR

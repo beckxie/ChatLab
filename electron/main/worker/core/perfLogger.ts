@@ -17,7 +17,7 @@ let currentLogFile: string | null = null
  */
 function getLogDir(): string {
   const dbDir = getDbDir()
-  const logDir = path.join(path.dirname(dbDir), 'logs')
+  const logDir = path.join(path.dirname(dbDir), 'logs', 'import')
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true })
   }
@@ -106,4 +106,3 @@ export function resetPerfLog(): void {
 export function getCurrentLogFile(): string | null {
   return currentLogFile
 }
-

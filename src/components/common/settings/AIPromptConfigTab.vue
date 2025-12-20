@@ -95,7 +95,7 @@ function isActivePreset(presetId: string, chatType: 'group' | 'private'): boolea
           <div class="flex-1 pr-4">
             <p class="text-sm font-medium text-gray-900 dark:text-white">发送条数限制</p>
             <p class="text-xs text-gray-500 dark:text-gray-400">
-              每次发送给 AI 的最大消息条数，用于控制上下文长度（建议在500以上）
+              每次发送给 AI 的最大消息条数，用于控制上下文长度（建议大于500）
             </p>
           </div>
           <UInput v-model.number="globalMaxMessages" type="number" min="1" max="5000" class="w-24" />

@@ -102,7 +102,7 @@ onMounted(() => {
           <div>
             <p class="text-sm font-medium text-gray-900 dark:text-white">匿名使用统计</p>
             <p class="text-xs text-gray-500 dark:text-gray-400">
-              开启该选项后，软件会收集版本号、操作系统等非敏感数据，用于协助优化产品
+              开启后，软件会收集版本号、操作系统版本等非敏感数据，用于帮助优化产品(●'◡'●)ﾉ♥
             </p>
           </div>
           <USwitch :model-value="analyticsEnabled" @update:model-value="toggleAnalytics" />

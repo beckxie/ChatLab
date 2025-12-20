@@ -1,6 +1,7 @@
 import { dialog, app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { platform } from '@electron-toolkit/utils'
+import { logger } from './logger'
 
 let isFirstShow = true
 const checkUpdate = (win) => {
@@ -59,7 +60,8 @@ const checkUpdate = (win) => {
               console.log('wait for post download operation')
             })
             .catch((downloadError) => {
-              dialog.showErrorBox('客户端下载失败', `err:${downloadError}`)
+              // 下载失败记录到日志，不显示给用户
+              logger.error(`[Update] 下载更新失败: ${downloadError}`)
             })
         }
       })
@@ -109,11 +111,10 @@ const checkUpdate = (win) => {
     }
   })
 
-  // 错误处理
-  autoUpdater.on('error', (err, ev) => {
-    // 更新出错，其中一步错误都会emit
-    console.log('error事件：', err, ev)
-    dialog.showErrorBox('遇到错误', `err:${err}, ev:${ev}`)
+  // 错误处理（静默处理，记录到日志）
+  autoUpdater.on('error', (err) => {
+    // 更新错误记录到日志，不显示给用户
+    logger.error(`[Update] 更新错误: ${err.message || err}`)
   })
 
   // 等待 3 秒再检查更新，确保窗口准备完成，用户进入系统
