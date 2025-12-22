@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useScreenCapture } from '@/composables'
 import { ref, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useLayoutStore } from '@/stores/layout'
 
 /**
  * 通用截屏按钮组件
@@ -30,6 +32,8 @@ const props = withDefaults(
 )
 
 const { isCapturing, capturePage, captureElement } = useScreenCapture()
+const layoutStore = useLayoutStore()
+const { screenshotMobileAdapt } = storeToRefs(layoutStore)
 
 // 生成唯一 ID 用于隐藏按钮自身
 const buttonId = ref('')
@@ -40,8 +44,14 @@ onMounted(() => {
 async function handleCapture(event: Event) {
   const btn = event.currentTarget as HTMLElement
 
+  // 根据用户设置决定是否启用移动端适配
+  const defaultOptions = {
+    hideSelectors: [`#${buttonId.value}`],
+    mobileWidth: screenshotMobileAdapt.value ? true : undefined,
+  }
+
   if (props.type === 'page') {
-    await capturePage({ hideSelectors: [`#${buttonId.value}`] })
+    await capturePage(defaultOptions)
   } else if (props.type === 'element') {
     let target: HTMLElement | null = null
 
@@ -52,7 +62,7 @@ async function handleCapture(event: Event) {
     }
 
     if (target) {
-      await captureElement(target, { hideSelectors: [`#${buttonId.value}`] })
+      await captureElement(target, defaultOptions)
     }
   }
 }

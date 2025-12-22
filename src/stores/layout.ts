@@ -15,6 +15,9 @@ export const useLayoutStore = defineStore(
     const showChatRecordDrawer = ref(false)
     const chatRecordQuery = ref<ChatRecordQuery | null>(null)
 
+    // 截图设置
+    const screenshotMobileAdapt = ref(true) // 截图时开启移动端适配，默认开启
+
     /**
      * 切换侧边栏展开/折叠状态
      */
@@ -65,6 +68,7 @@ export const useLayoutStore = defineStore(
       screenCaptureImage,
       showChatRecordDrawer,
       chatRecordQuery,
+      screenshotMobileAdapt,
       toggleSidebar,
       openScreenCaptureModal,
       closeScreenCaptureModal,
@@ -77,6 +81,10 @@ export const useLayoutStore = defineStore(
       {
         pick: ['isSidebarCollapsed'],
         storage: sessionStorage,
+      },
+      {
+        pick: ['screenshotMobileAdapt'],
+        storage: localStorage,
       },
     ],
   }

@@ -7,6 +7,9 @@ import { captureAsImageData } from '@/utils/snapCapture'
 import { useToast } from '@nuxt/ui/runtime/composables/useToast.js'
 import { useLayoutStore } from '@/stores/layout'
 
+/** 默认移动端最大宽度 */
+const DEFAULT_MOBILE_MAX_WIDTH = 525
+
 export interface ScreenCaptureOptions {
   /** 截屏时要隐藏的元素选择器列表 */
   hideSelectors?: string[]
@@ -16,6 +19,13 @@ export interface ScreenCaptureOptions {
   backgroundColor?: string
   /** 是否捕获完整的可滚动内容（默认 true） */
   fullContent?: boolean
+  /**
+   * 移动端适配宽度，设置后会临时改变元素宽度以适配移动端布局
+   * - 传入数字：使用指定宽度
+   * - 传入 true：使用默认值 525px（自动适配，仅当原始宽度超过时才缩放）
+   * - 传入 false 或不传：不进行移动端适配
+   */
+  mobileWidth?: number | boolean
 }
 
 /**
@@ -133,12 +143,37 @@ export function useScreenCapture() {
     const originalPadding = element.style.padding
     const originalPaddingBottom = element.style.paddingBottom
     const originalPosition = element.style.position
+    const originalWidth = element.style.width
+    const originalMinWidth = element.style.minWidth
+    const originalMaxWidth = element.style.maxWidth
 
     element.style.padding = '16px'
     element.style.paddingBottom = '48px' // 为水印留出空间
     const computedPosition = window.getComputedStyle(element).position
     if (computedPosition === 'static') {
       element.style.position = 'relative'
+    }
+
+    // 移动端宽度适配（渐进式缩放）
+    let appliedMobileWidth = false
+    if (options?.mobileWidth) {
+      const baseWidth = typeof options.mobileWidth === 'number' ? options.mobileWidth : DEFAULT_MOBILE_MAX_WIDTH
+
+      // 获取元素当前的实际宽度
+      const currentWidth = element.getBoundingClientRect().width
+
+      // 只有当原始宽度大于基准宽度时才缩放
+      if (currentWidth > baseWidth) {
+        // 渐进式缩放：目标宽度 = 基准宽度 + (原始宽度 - 基准宽度) × 缩放因子
+        // 缩放因子 0.3 表示超出部分保留 30%
+        const scaleFactor = 0.3
+        const targetWidth = Math.round(baseWidth + (currentWidth - baseWidth) * scaleFactor)
+
+        element.style.width = `${targetWidth}px`
+        element.style.minWidth = `${targetWidth}px`
+        element.style.maxWidth = `${targetWidth}px`
+        appliedMobileWidth = true
+      }
     }
 
     // 添加底部水印标识（绝对定位）
@@ -148,9 +183,9 @@ export function useScreenCapture() {
       position: absolute;
       left: 0;
       right: 0;
-      bottom: 8px;
+      bottom: 16px;
       text-align: center;
-      font-size: 12px;
+      font-size: 14px;
       color: #9ca3af;
     `
     watermark.textContent = '聊天分析实验室 · chatlab.fun'
@@ -191,7 +226,12 @@ export function useScreenCapture() {
 
     // 如果需要捕获完整内容，临时移除 overflow 限制
     const fullContent = options?.fullContent !== false
-    const overflowElements: { el: HTMLElement; originalOverflow: string; originalHeight: string; originalMaxHeight: string }[] = []
+    const overflowElements: {
+      el: HTMLElement
+      originalOverflow: string
+      originalHeight: string
+      originalMaxHeight: string
+    }[] = []
 
     if (fullContent) {
       // 处理目标元素及其所有子元素的 overflow 和 max-height 限制
@@ -367,6 +407,15 @@ export function useScreenCapture() {
     }
 
     try {
+      // 如果应用了移动端宽度，等待 DOM 重新布局
+      if (appliedMobileWidth) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve())
+          })
+        })
+      }
+
       const imageData = await captureAsImageData(element, {
         maxExportWidth: options?.maxExportWidth,
         backgroundColor: options?.backgroundColor,
@@ -418,6 +467,9 @@ export function useScreenCapture() {
       element.style.padding = originalPadding
       element.style.paddingBottom = originalPaddingBottom
       element.style.position = originalPosition
+      element.style.width = originalWidth
+      element.style.minWidth = originalMinWidth
+      element.style.maxWidth = originalMaxWidth
 
       // 恢复文本节点的原始内容
       for (const { node, originalText } of textNodesBackup) {
