@@ -19,12 +19,7 @@ import type {
   CheckInAnalysis,
   MemberWithStats,
 } from '../../src/types/analysis'
-import type {
-  FileParseInfo,
-  ConflictCheckResult,
-  MergeParams,
-  MergeResult,
-} from '../../src/types/format'
+import type { FileParseInfo, ConflictCheckResult, MergeParams, MergeResult } from '../../src/types/format'
 import type { TableSchema, SQLResult } from '../../src/components/analysis/SQLLab/types'
 
 interface TimeFilter {
@@ -107,6 +102,7 @@ interface SearchMessageResult {
   senderName: string
   senderPlatformId: string
   senderAliases: string[]
+  senderAvatar: string | null
   content: string
   timestamp: number
   type: number
@@ -322,11 +318,21 @@ interface AgentResult {
   totalUsage?: TokenUsage
 }
 
+/** Owner 信息（当前用户在对话中的身份） */
+interface OwnerInfo {
+  /** Owner 的 platformId */
+  platformId: string
+  /** Owner 的显示名称 */
+  displayName: string
+}
+
 interface ToolContext {
   sessionId: string
   timeFilter?: { startTs: number; endTs: number }
   /** 用户配置：每次发送给 AI 的最大消息条数 */
   maxMessagesLimit?: number
+  /** Owner 信息（当前用户在对话中的身份） */
+  ownerInfo?: OwnerInfo
 }
 
 // 用户自定义提示词配置

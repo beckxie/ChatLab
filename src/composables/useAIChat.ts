@@ -6,6 +6,7 @@
 import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePromptStore } from '@/stores/prompt'
+import { useSessionStore } from '@/stores/session'
 
 // 工具调用记录
 export interface ToolCallRecord {
@@ -82,6 +83,12 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_time_stats: '获取时间分布',
 }
 
+/** Owner 信息类型 */
+interface OwnerInfo {
+  platformId: string
+  displayName: string
+}
+
 export function useAIChat(
   sessionId: string,
   timeFilter?: { startTs: number; endTs: number },
@@ -89,6 +96,7 @@ export function useAIChat(
 ) {
   // 获取 chat store 中的提示词配置和全局设置
   const promptStore = usePromptStore()
+  const sessionStore = useSessionStore()
   const { activeGroupPreset, activePrivatePreset, aiGlobalSettings } = storeToRefs(promptStore)
 
   // 获取当前聊天类型对应的提示词配置
@@ -108,12 +116,43 @@ export function useAIChat(
   const isAIThinking = ref(false)
   const currentConversationId = ref<string | null>(null)
 
+  // Owner 信息（用于告诉 AI 当前用户是谁）
+  const ownerInfo = ref<OwnerInfo | undefined>(undefined)
+
   // 工具调用状态
   const currentToolStatus = ref<ToolStatus | null>(null)
   const toolsUsedInCurrentRound = ref<string[]>([])
 
   // Token 使用量（当前会话累计）
   const sessionTokenUsage = ref<TokenUsage>({ promptTokens: 0, completionTokens: 0, totalTokens: 0 })
+
+  // 初始化：获取 Owner 信息
+  async function initOwnerInfo() {
+    const ownerId = sessionStore.currentSession?.ownerId
+    if (!ownerId) {
+      ownerInfo.value = undefined
+      return
+    }
+
+    try {
+      // 获取成员列表，找到 owner 的显示名称
+      const members = await window.chatApi.getMembers(sessionId)
+      const ownerMember = members.find((m) => m.platformId === ownerId)
+      if (ownerMember) {
+        ownerInfo.value = {
+          platformId: ownerId,
+          displayName: ownerMember.groupNickname || ownerMember.accountName || ownerId,
+        }
+        console.log('[AI] Owner 信息已加载:', ownerInfo.value)
+      }
+    } catch (error) {
+      console.error('[AI] 获取 Owner 信息失败:', error)
+      ownerInfo.value = undefined
+    }
+  }
+
+  // 初始化时加载 Owner 信息
+  initOwnerInfo()
 
   // 中止控制
   let isAborted = false
@@ -248,15 +287,20 @@ export function useAIChat(
 
     try {
       // 调用 Agent API
+      // 注意：ownerInfo 需要深拷贝为普通对象，否则 IPC 克隆会失败
       const context = {
         sessionId,
         timeFilter: timeFilter ? { startTs: timeFilter.startTs, endTs: timeFilter.endTs } : undefined,
         maxMessagesLimit: aiGlobalSettings.value.maxMessagesPerRequest,
+        ownerInfo: ownerInfo.value
+          ? { platformId: ownerInfo.value.platformId, displayName: ownerInfo.value.displayName }
+          : undefined,
       }
 
       console.log('[AI] 构建 context:', {
         sessionId,
         maxMessagesLimit: context.maxMessagesLimit,
+        ownerInfo: context.ownerInfo,
         aiGlobalSettings: aiGlobalSettings.value,
       })
 
@@ -275,16 +319,12 @@ export function useAIChat(
           content: msg.content,
         }))
 
-      console.log(
-        '[AI] 调用 Agent API...',
+      console.log('[AI] 调用 Agent API...', {
         context,
-        'historyLength:',
-        historyMessages.length,
-        'chatType:',
+        historyLength: historyMessages.length,
         chatType,
-        'promptConfig:',
-        currentPromptConfig.value
-      )
+        promptConfig: currentPromptConfig.value,
+      })
 
       // 获取 requestId 和 promise（传递历史消息、聊天类型和提示词配置）
       const { requestId: agentReqId, promise: agentPromise } = window.agentApi.runStream(
@@ -379,7 +419,11 @@ export function useAIChat(
         },
         historyMessages,
         chatType,
-        currentPromptConfig.value
+        // 确保传递纯对象，避免 IPC 克隆失败
+        {
+          roleDefinition: currentPromptConfig.value.roleDefinition,
+          responseRules: currentPromptConfig.value.responseRules,
+        }
       )
 
       // 存储 Agent 请求 ID（用于中止）

@@ -52,7 +52,7 @@ const hintText = computed(() => {
   if (currentOwner.value) {
     return `当前：${getDisplayName(currentOwner.value)}`
   }
-  return props.chatType === 'group' ? '选择你在群聊中的身份，便于数据分析' : '选择你在对话中的身份，便于数据分析'
+  return '选择你是谁：1. 将会显示在聊天记录查看器中的右侧 2. AI对话中会标识你的身份'
 })
 
 // 更新 owner

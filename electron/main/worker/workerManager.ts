@@ -381,6 +381,8 @@ export interface SearchMessageResult {
   id: number
   senderName: string
   senderPlatformId: string
+  senderAliases: string[]
+  senderAvatar: string | null
   content: string
   timestamp: number
   type: number

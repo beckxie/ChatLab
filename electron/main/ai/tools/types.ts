@@ -9,6 +9,14 @@ import type { ToolDefinition } from '../llm/types'
  * 工具执行上下文
  * 包含执行工具时需要的所有上下文信息
  */
+/** Owner 信息（当前用户在对话中的身份） */
+export interface OwnerInfo {
+  /** Owner 的 platformId */
+  platformId: string
+  /** Owner 的显示名称 */
+  displayName: string
+}
+
 export interface ToolContext {
   /** 当前会话 ID（数据库文件名） */
   sessionId: string
@@ -19,6 +27,8 @@ export interface ToolContext {
   }
   /** 用户配置的消息条数限制（工具获取消息时使用） */
   maxMessagesLimit?: number
+  /** Owner 信息（当前用户在对话中的身份） */
+  ownerInfo?: OwnerInfo
 }
 
 /**

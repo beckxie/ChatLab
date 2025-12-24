@@ -6,7 +6,7 @@
 import type { ChatMessage, ChatOptions, ChatStreamChunk, ToolCall } from './llm/types'
 import { chatStream, chat } from './llm'
 import { getAllToolDefinitions, executeToolCalls } from './tools'
-import type { ToolContext } from './tools/types'
+import type { ToolContext, OwnerInfo } from './tools/types'
 import { aiLogger } from './logger'
 import { randomUUID } from 'crypto'
 
@@ -139,8 +139,9 @@ export interface PromptConfig {
 /**
  * 获取系统锁定部分的提示词（工具说明、时间处理等）
  * @param chatType 聊天类型 ('group' | 'private')
+ * @param ownerInfo Owner 信息（当前用户在对话中的身份）
  */
-function getLockedPromptSection(chatType: 'group' | 'private'): string {
+function getLockedPromptSection(chatType: 'group' | 'private', ownerInfo?: OwnerInfo): string {
   const now = new Date()
   const currentDate = now.toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -151,6 +152,15 @@ function getLockedPromptSection(chatType: 'group' | 'private'): string {
 
   const isPrivate = chatType === 'private'
   const chatTypeDesc = isPrivate ? '私聊记录' : '群聊记录'
+
+  // Owner 说明（当用户设置了"我是谁"时）
+  const ownerNote = ownerInfo
+    ? `当前用户身份：
+- 用户在${isPrivate ? '对话' : '群聊'}中的身份是「${ownerInfo.displayName}」（platformId: ${ownerInfo.platformId}）
+- 当用户提到"我"、"我的"时，指的就是「${ownerInfo.displayName}」
+- 查询"我"的发言时，使用 sender_id 参数筛选该成员
+`
+    : ''
 
   // 成员说明（私聊只有2人）
   const memberNote = isPrivate
@@ -166,7 +176,7 @@ function getLockedPromptSection(chatType: 'group' | 'private'): string {
 `
 
   return `当前日期是 ${currentDate}。
-
+${ownerNote}
 你可以使用以下工具来获取${chatTypeDesc}数据：
 
 1. search_messages - 根据关键词搜索聊天记录，支持时间筛选和发送者筛选
@@ -216,14 +226,19 @@ function getFallbackResponseRules(): string {
  *
  * @param chatType 聊天类型 ('group' | 'private')
  * @param promptConfig 用户自定义提示词配置（来自前端激活的预设）
+ * @param ownerInfo Owner 信息（当前用户在对话中的身份）
  */
-function buildSystemPrompt(chatType: 'group' | 'private' = 'group', promptConfig?: PromptConfig): string {
+function buildSystemPrompt(
+  chatType: 'group' | 'private' = 'group',
+  promptConfig?: PromptConfig,
+  ownerInfo?: OwnerInfo
+): string {
   // 使用用户配置或 fallback
   const roleDefinition = promptConfig?.roleDefinition || getFallbackRoleDefinition(chatType)
   const responseRules = promptConfig?.responseRules || getFallbackResponseRules()
 
-  // 获取锁定的系统部分（包含动态日期和工具说明）
-  const lockedSection = getLockedPromptSection(chatType)
+  // 获取锁定的系统部分（包含动态日期、工具说明和 Owner 信息）
+  const lockedSection = getLockedPromptSection(chatType, ownerInfo)
 
   // 组合完整提示词
   return `${roleDefinition}
@@ -300,7 +315,7 @@ export class Agent {
     }
 
     // 初始化消息（包含历史记录）
-    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig)
+    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig, this.context.ownerInfo)
     this.messages = [
       { role: 'system', content: systemPrompt },
       ...this.historyMessages, // 插入历史对话
@@ -405,7 +420,7 @@ export class Agent {
     }
 
     // 初始化消息（包含历史记录）
-    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig)
+    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig, this.context.ownerInfo)
     this.messages = [
       { role: 'system', content: systemPrompt },
       ...this.historyMessages, // 插入历史对话

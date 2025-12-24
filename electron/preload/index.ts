@@ -20,12 +20,7 @@ import type {
   MemeBattleAnalysis,
   MemberWithStats,
 } from '../../src/types/analysis'
-import type {
-  FileParseInfo,
-  ConflictCheckResult,
-  MergeParams,
-  MergeResult,
-} from '../../src/types/format'
+import type { FileParseInfo, ConflictCheckResult, MergeParams, MergeResult } from '../../src/types/format'
 
 // Custom APIs for renderer
 const api = {
@@ -439,6 +434,7 @@ interface SearchMessageResult {
   senderName: string
   senderPlatformId: string
   senderAliases: string[]
+  senderAvatar: string | null
   content: string
   timestamp: number
   type: number

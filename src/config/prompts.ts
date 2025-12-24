@@ -251,13 +251,19 @@ export function getOriginalBuiltinPreset(presetId: string): PromptPreset | undef
 
 // ==================== 锁定部分预览（仅用于前端展示） ====================
 
+/** Owner 信息（用于前端预览） */
+export interface OwnerInfoPreview {
+  displayName: string
+}
+
 /**
  * 获取锁定部分的提示词预览
  * 注意：实际执行时由主进程 agent.ts 生成，包含动态日期
  *
  * @param chatType 聊天类型
+ * @param ownerInfo Owner 信息（可选，用于预览时显示）
  */
-export function getLockedPromptSectionPreview(chatType: 'group' | 'private'): string {
+export function getLockedPromptSectionPreview(chatType: 'group' | 'private', ownerInfo?: OwnerInfoPreview): string {
   const now = new Date()
   const currentDate = now.toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -268,6 +274,15 @@ export function getLockedPromptSectionPreview(chatType: 'group' | 'private'): st
 
   const isPrivate = chatType === 'private'
   const chatTypeDesc = isPrivate ? '私聊记录' : '群聊记录'
+
+  // Owner 说明（当用户设置了"我是谁"时）
+  const ownerNote = ownerInfo
+    ? `当前用户身份：
+- 用户在${isPrivate ? '对话' : '群聊'}中的身份是「${ownerInfo.displayName}」
+- 当用户提到"我"、"我的"时，指的就是「${ownerInfo.displayName}」
+- 查询"我"的发言时，使用 sender_id 参数筛选该成员
+`
+    : ''
 
   const memberNote = isPrivate
     ? `成员查询策略：
@@ -280,7 +295,7 @@ export function getLockedPromptSectionPreview(chatType: 'group' | 'private'): st
 - 找到成员后，使用其 id 字段作为 search_messages 的 sender_id 参数来获取该成员的发言`
 
   return `当前日期是 ${currentDate}。
-
+${ownerNote}
 你可以使用以下工具来获取${chatTypeDesc}数据：
 
 1. search_messages - 根据关键词搜索聊天记录，支持时间筛选和发送者筛选
@@ -308,13 +323,15 @@ ${memberNote}
  * @param roleDefinition 角色定义
  * @param responseRules 回答要求
  * @param chatType 聊天类型
+ * @param ownerInfo Owner 信息（可选）
  */
 export function buildPromptPreview(
   roleDefinition: string,
   responseRules: string,
-  chatType: 'group' | 'private'
+  chatType: 'group' | 'private',
+  ownerInfo?: OwnerInfoPreview
 ): string {
-  const lockedSection = getLockedPromptSectionPreview(chatType)
+  const lockedSection = getLockedPromptSectionPreview(chatType, ownerInfo)
 
   return `${roleDefinition}
 
