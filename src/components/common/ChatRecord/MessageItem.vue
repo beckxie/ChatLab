@@ -182,7 +182,7 @@ function highlightContent(content: string): string {
               </p>
             </div>
             <p
-              class="whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-200"
+              class="whitespace-pre-wrap break-all text-sm text-gray-700 dark:text-gray-200"
               v-html="highlightContent(message.content || '')"
             />
           </div>

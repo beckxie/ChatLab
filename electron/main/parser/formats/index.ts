@@ -14,6 +14,7 @@ import yccccccyEchotrace from './ycccccccy-echotrace'
 import tyrrrzDiscordExporter from './tyrrrz-discord-exporter'
 import whatsappNativeTxt from './whatsapp-native-txt'
 import qqNativeTxt from './qq-native-txt'
+import instagramNative from './instagram-native'
 
 /**
  * 所有支持的格式模块（按优先级排序）
@@ -25,7 +26,8 @@ export const formats: FormatModule[] = [
   shuakamiQqExporter, // 优先级 10 - shuakami/qq-chat-exporter
   yccccccyEchotrace, // 优先级 15 - ycccccccy/echotrace
   tyrrrzDiscordExporter, // 优先级 20 - Tyrrrz/DiscordChatExporter
-  whatsappNativeTxt, // 优先级 25 - WhatsApp 官方导出 TXT
+  instagramNative, // 优先级 25 - Instagram 官方导出
+  whatsappNativeTxt, // 优先级 26 - WhatsApp 官方导出 TXT
   qqNativeTxt, // 优先级 30 - QQ 官方导出 TXT
 ]
 
@@ -37,6 +39,7 @@ export {
   shuakamiQqExporterChunked,
   yccccccyEchotrace,
   tyrrrzDiscordExporter,
-  qqNativeTxt,
+  instagramNative,
   whatsappNativeTxt,
+  qqNativeTxt,
 }
