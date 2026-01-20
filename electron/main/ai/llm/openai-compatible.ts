@@ -3,6 +3,9 @@
  * 支持任何兼容 OpenAI API 格式的服务（如 Ollama、LocalAI、vLLM 等）
  */
 
+import { createOpenAI } from '@ai-sdk/openai'
+import { generateText, streamText } from 'ai'
+import type { ModelMessage, ToolSet, TypedToolCall } from 'ai'
 import type {
   ILLMService,
   LLMProvider,
@@ -10,12 +13,14 @@ import type {
   ChatOptions,
   ChatResponse,
   ChatStreamChunk,
-  ProviderInfo,
   ToolCall,
+  ProviderInfo,
 } from './types'
 import { aiLogger } from '../logger'
+import { buildModelMessages, buildToolSet, mapFinishReason, mapToolCalls, mapUsage } from './sdkUtils'
 
 const DEFAULT_BASE_URL = 'http://localhost:11434/v1'
+const DEFAULT_THOUGHT_SIGNATURE = 'context_engineering_is_the_way_to_go'
 
 export const OPENAI_COMPATIBLE_INFO: ProviderInfo = {
   id: 'openai-compatible',
@@ -29,364 +34,267 @@ export const OPENAI_COMPATIBLE_INFO: ProviderInfo = {
   ],
 }
 
+/**
+ * 统一处理 baseUrl：去掉尾部斜杠和多余路径
+ */
+function normalizeBaseUrl(baseUrl?: string): string {
+  let processed = baseUrl || DEFAULT_BASE_URL
+  processed = processed.replace(/\/+$/, '')
+  if (processed.endsWith('/chat/completions')) {
+    processed = processed.slice(0, -'/chat/completions'.length)
+  }
+  return processed
+}
+
+/**
+ * MiniMax 流式返回可能是累计文本，这里按前缀增量去重
+ */
+function dedupeCumulativeStreamChunk(
+  chunk: string,
+  previousText: string
+): { delta: string; nextText: string } {
+  if (!previousText) {
+    return { delta: chunk, nextText: chunk }
+  }
+
+  if (chunk.startsWith(previousText)) {
+    return { delta: chunk.slice(previousText.length), nextText: chunk }
+  }
+
+  if (previousText.startsWith(chunk)) {
+    // 偶发回退或重复帧，保持已输出内容
+    return { delta: '', nextText: previousText }
+  }
+
+  // 无法判定为累计时，退化为增量追加
+  return { delta: chunk, nextText: previousText + chunk }
+}
+
+
+/**
+ * 包装 fetch：注入思考开关和 thought_signature
+ */
+function createCompatFetch(disableThinking: boolean): typeof fetch {
+  return async (input, init) => {
+    if (!init?.body || typeof init.body !== 'string') {
+      return fetch(input, init)
+    }
+
+    let parsedBody: Record<string, unknown> | null = null
+    try {
+      parsedBody = JSON.parse(init.body) as Record<string, unknown>
+    } catch {
+      return fetch(input, init)
+    }
+
+    if (!parsedBody) {
+      return fetch(input, init)
+    }
+
+    let changed = false
+
+    if (Array.isArray(parsedBody.messages)) {
+      const messages = parsedBody.messages as Array<Record<string, unknown>>
+      // 为 Gemini 兼容后端补充 thought_signature
+      for (const message of messages) {
+        if (
+          message &&
+          typeof message === 'object' &&
+          (message as { role?: string }).role === 'assistant' &&
+          Array.isArray((message as { tool_calls?: unknown[] }).tool_calls)
+        ) {
+          const toolCalls = (message as { tool_calls: Array<Record<string, unknown>> }).tool_calls
+          for (const toolCall of toolCalls) {
+            const typedCall = toolCall as Record<string, unknown> & {
+              thought_signature?: string
+              thoughtSignature?: string
+            }
+            if (!typedCall.thought_signature && !typedCall.thoughtSignature) {
+              typedCall.thought_signature = DEFAULT_THOUGHT_SIGNATURE
+              changed = true
+            }
+          }
+        }
+      }
+
+      // 禁用思考模式（用于本地模型）
+      if (disableThinking) {
+        const chatTemplate = parsedBody.chat_template_kwargs
+        if (!chatTemplate || typeof chatTemplate !== 'object') {
+          parsedBody.chat_template_kwargs = { enable_thinking: false }
+          changed = true
+        } else if (!(chatTemplate as { enable_thinking?: boolean }).enable_thinking) {
+          parsedBody.chat_template_kwargs = {
+            ...(chatTemplate as Record<string, unknown>),
+            enable_thinking: false,
+          }
+          changed = true
+        }
+      }
+    }
+
+    if (!changed) {
+      return fetch(input, init)
+    }
+
+    const nextInit: RequestInit = {
+      ...init,
+      body: JSON.stringify(parsedBody),
+    }
+
+    return fetch(input, nextInit)
+  }
+}
+
 export class OpenAICompatibleService implements ILLMService {
   private apiKey: string
   private baseUrl: string
   private model: string
-  private disableThinking: boolean
+  private providerId: LLMProvider
+  private models: ProviderInfo['models']
+  private defaultModel: string
+  private provider = createOpenAI()
 
-  constructor(apiKey: string, model?: string, baseUrl?: string, disableThinking?: boolean) {
-    this.apiKey = apiKey || 'sk-no-key-required' // 本地服务可能不需要 API Key
-    // 智能处理 baseUrl：如果用户已经包含 /chat/completions，则去掉它
-    let processedBaseUrl = baseUrl || DEFAULT_BASE_URL
-    processedBaseUrl = processedBaseUrl.replace(/\/+$/, '') // 去掉尾部斜杠
-    if (processedBaseUrl.endsWith('/chat/completions')) {
-      processedBaseUrl = processedBaseUrl.slice(0, -'/chat/completions'.length)
-    }
-    this.baseUrl = processedBaseUrl
-    this.model = model || 'llama3.2'
-    this.disableThinking = disableThinking ?? true // 默认禁用思考模式
-  }
+  constructor(
+    apiKey: string,
+    model?: string,
+    baseUrl?: string,
+    disableThinking?: boolean,
+    providerId?: LLMProvider,
+    models?: ProviderInfo['models']
+  ) {
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+    const resolvedApiKey = apiKey || 'sk-no-key-required'
+    const resolvedDisableThinking = disableThinking ?? true
+    const resolvedProviderId = providerId ?? 'openai-compatible'
+    const resolvedModels = models && models.length > 0 ? models : OPENAI_COMPATIBLE_INFO.models
+    const defaultModel = resolvedModels[0]?.id || 'llama3.2'
+    const resolvedModel = model || defaultModel
 
-  /**
-   * 设置 Bearer Token 认证头
-   */
-  private setAuthHeaders(headers: Record<string, string>): void {
-    if (this.apiKey && this.apiKey !== 'sk-no-key-required') {
-      headers['Authorization'] = `Bearer ${this.apiKey}`
-    }
+    this.apiKey = resolvedApiKey
+    this.baseUrl = normalizedBaseUrl
+    this.providerId = resolvedProviderId
+    this.models = resolvedModels
+    this.defaultModel = defaultModel
+    this.model = resolvedModel
+
+    this.provider = createOpenAI({
+      apiKey: resolvedApiKey,
+      baseURL: normalizedBaseUrl,
+      name: 'openai-compatible',
+      fetch: createCompatFetch(resolvedDisableThinking),
+    })
   }
 
   getProvider(): LLMProvider {
-    return 'openai-compatible'
+    return this.providerId
   }
 
   getModels(): string[] {
-    return OPENAI_COMPATIBLE_INFO.models.map((m) => m.id)
+    return this.models.map((m) => m.id)
   }
 
   getDefaultModel(): string {
-    return 'llama3.2'
+    return this.defaultModel
+  }
+
+  // 统一处理消息映射，保持与旧实现一致
+  private buildMessages(messages: ChatMessage[]): ModelMessage[] {
+    return buildModelMessages(messages)
+  }
+
+  // 统一映射工具调用结果
+  private mapToolCalls(toolCalls: TypedToolCall<ToolSet>[]): ToolCall[] {
+    return mapToolCalls(toolCalls)
+  }
+
+  // 仅 MiniMax 需要累计去重，避免其他模型缓存全文
+  private shouldTrackStreamText(): boolean {
+    return this.providerId === 'minimax'
+  }
+
+  // MiniMax 流式返回可能是累计文本，按前缀增量去重
+  private getStreamChunkDelta(chunk: string, previousText: string): { delta: string; nextText: string } {
+    if (this.providerId !== 'minimax') {
+      return { delta: chunk, nextText: previousText + chunk }
+    }
+    return dedupeCumulativeStreamChunk(chunk, previousText)
   }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
-    const requestBody: Record<string, unknown> = {
-      model: this.model,
-      messages: messages.map((m) => {
-        const msg: Record<string, unknown> = { role: m.role, content: m.content }
-        if (m.role === 'tool' && m.tool_call_id) {
-          msg.tool_call_id = m.tool_call_id
-        }
-        if (m.role === 'assistant' && m.tool_calls) {
-          // 确保 thoughtSignature 被传递（Gemini 3+ 通过 OpenAI 兼容 API 需要）
-          msg.tool_calls = m.tool_calls.map((tc) => ({
-            ...tc,
-            // 如果没有签名，使用虚拟签名（用于 Vertex AI/Gemini 后端）
-            thought_signature: tc.thoughtSignature || 'context_engineering_is_the_way_to_go',
-          }))
-        }
-        return msg
-      }),
+    const model = this.provider.chat(this.model)
+    const toolSet = buildToolSet(options?.tools)
+
+    const result = await generateText({
+      model,
+      messages: this.buildMessages(messages),
+      tools: toolSet,
       temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens ?? 2048,
-      stream: false,
-    }
-
-    if (options?.tools && options.tools.length > 0) {
-      requestBody.tools = options.tools
-    }
-
-    // 禁用思考模式（用于 Qwen3、DeepSeek-R1 等本地模型）
-    if (this.disableThinking) {
-      requestBody.chat_template_kwargs = { enable_thinking: false }
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    this.setAuthHeaders(headers)
-
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: options?.abortSignal,
+      maxTokens: options?.maxTokens ?? 2048,
+      abortSignal: options?.abortSignal,
     })
 
-    if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`OpenAI Compatible API error: ${response.status} - ${error}`)
-    }
-
-    const data = await response.json()
-    const choice = data.choices?.[0]
-    const message = choice?.message
-
-    let finishReason: ChatResponse['finishReason'] = 'error'
-    if (choice?.finish_reason === 'stop') {
-      finishReason = 'stop'
-    } else if (choice?.finish_reason === 'length') {
-      finishReason = 'length'
-    } else if (choice?.finish_reason === 'tool_calls') {
-      finishReason = 'tool_calls'
-    }
-
-    let toolCalls: ToolCall[] | undefined
-    if (message?.tool_calls && Array.isArray(message.tool_calls)) {
-      toolCalls = message.tool_calls.map((tc: Record<string, unknown>) => ({
-        id: tc.id as string,
-        type: 'function' as const,
-        function: {
-          name: (tc.function as Record<string, unknown>)?.name as string,
-          arguments: (tc.function as Record<string, unknown>)?.arguments as string,
-        },
-        // 提取 thoughtSignature（Gemini 3+ 通过 OpenAI 兼容 API 可能返回此字段）
-        thoughtSignature: (tc.thought_signature || tc.thoughtSignature) as string | undefined,
-      }))
-    }
+    const toolCalls = result.toolCalls.length > 0 ? this.mapToolCalls(result.toolCalls) : undefined
 
     return {
-      content: message?.content || '',
-      finishReason,
+      content: result.text,
+      finishReason: mapFinishReason(result.finishReason),
       tool_calls: toolCalls,
-      usage: data.usage
-        ? {
-            promptTokens: data.usage.prompt_tokens,
-            completionTokens: data.usage.completion_tokens,
-            totalTokens: data.usage.total_tokens,
-          }
-        : undefined,
+      usage: mapUsage(result.usage),
     }
   }
 
   async *chatStream(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<ChatStreamChunk> {
-    const requestBody: Record<string, unknown> = {
-      model: this.model,
-      messages: messages.map((m) => {
-        const msg: Record<string, unknown> = { role: m.role, content: m.content }
-        if (m.role === 'tool' && m.tool_call_id) {
-          msg.tool_call_id = m.tool_call_id
-        }
-        if (m.role === 'assistant' && m.tool_calls) {
-          // 确保 thoughtSignature 被传递（Gemini 3+ 通过 OpenAI 兼容 API 需要）
-          msg.tool_calls = m.tool_calls.map((tc) => ({
-            ...tc,
-            // 如果没有签名，使用虚拟签名（用于 Vertex AI/Gemini 后端）
-            thought_signature: tc.thoughtSignature || 'context_engineering_is_the_way_to_go',
-          }))
-        }
-        return msg
-      }),
+    const model = this.provider.chat(this.model)
+    const toolSet = buildToolSet(options?.tools)
+    const shouldTrack = this.shouldTrackStreamText()
+    let streamedText = ''
+
+    const result = streamText({
+      model,
+      messages: this.buildMessages(messages),
+      tools: toolSet,
       temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens ?? 2048,
-      stream: true,
-      // 启用流式响应中的 usage 统计（OpenAI API 兼容）
-      stream_options: { include_usage: true },
-    }
-
-    if (options?.tools && options.tools.length > 0) {
-      requestBody.tools = options.tools
-    }
-
-    // 禁用思考模式（用于 Qwen3、DeepSeek-R1 等本地模型）
-    if (this.disableThinking) {
-      requestBody.chat_template_kwargs = { enable_thinking: false }
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    this.setAuthHeaders(headers)
-
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: options?.abortSignal,
+      maxTokens: options?.maxTokens ?? 2048,
+      abortSignal: options?.abortSignal,
     })
 
-    if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`OpenAI Compatible API error: ${response.status} - ${error}`)
-    }
-
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error('Failed to get response reader')
-    }
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const toolCallsAccumulator: Map<number, { id: string; name: string; arguments: string }> = new Map()
-
-    let totalChunks = 0
-    let totalContent = ''
-
     try {
-      while (true) {
-        // 检查是否已中止
+      for await (const chunk of result.textStream) {
         if (options?.abortSignal?.aborted) {
           yield { content: '', isFinished: true, finishReason: 'stop' }
           return
         }
-
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || !trimmed.startsWith('data: ')) continue
-
-          const data = trimmed.slice(6)
-
-          if (data === '[DONE]') {
-            if (toolCallsAccumulator.size > 0) {
-              const toolCalls: ToolCall[] = Array.from(toolCallsAccumulator.values()).map((tc) => ({
-                id: tc.id,
-                type: 'function' as const,
-                function: {
-                  name: tc.name,
-                  arguments: tc.arguments,
-                },
-                // 传递 thoughtSignature（如果存在）
-                thoughtSignature: tc.thoughtSignature,
-              }))
-              yield { content: '', isFinished: true, finishReason: 'tool_calls', tool_calls: toolCalls }
-            } else {
-              yield { content: '', isFinished: true, finishReason: 'stop' }
-            }
-            return
+        if (chunk) {
+          const { delta, nextText } = this.getStreamChunkDelta(chunk, streamedText)
+          if (shouldTrack) {
+            streamedText = nextText
           }
-
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.choices?.[0]?.delta
-            const finishReason = parsed.choices?.[0]?.finish_reason
-
-            // 调试：如果有 delta 但没有 content，记录其他可能的内容字段（只写日志文件，不输出控制台）
-            if (delta && !delta.content && !delta.tool_calls && !finishReason) {
-              const deltaKeys = Object.keys(delta)
-              if (deltaKeys.length > 0 && !deltaKeys.every((k) => ['role', 'name', 'audio_content'].includes(k))) {
-                aiLogger.debug('OpenAI-Compatible', '检测到未处理的 delta 字段', { deltaKeys, delta })
-              }
-            }
-
-            if (delta?.content) {
-              totalChunks++
-              totalContent += delta.content
-              yield {
-                content: delta.content,
-                isFinished: false,
-              }
-            }
-
-            if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
-              for (const tc of delta.tool_calls) {
-                const index = tc.index ?? 0
-                const existing = toolCallsAccumulator.get(index)
-                if (existing) {
-                  if (tc.function?.arguments) {
-                    existing.arguments += tc.function.arguments
-                  }
-                  // 更新 thoughtSignature（如果存在）
-                  if (tc.thought_signature || tc.thoughtSignature) {
-                    existing.thoughtSignature = tc.thought_signature || tc.thoughtSignature
-                  }
-                } else {
-                  toolCallsAccumulator.set(index, {
-                    id: tc.id || '',
-                    name: tc.function?.name || '',
-                    arguments: tc.function?.arguments || '',
-                    // 提取 thoughtSignature（Gemini 3+ 通过 OpenAI 兼容 API 可能返回此字段）
-                    // 如果 API 不返回，使用 Gemini 文档提供的虚拟签名绕过验证
-                    thoughtSignature: tc.thought_signature || tc.thoughtSignature || 'context_engineering_is_the_way_to_go',
-                  })
-                }
-              }
-            }
-
-            if (finishReason) {
-              let reason: ChatStreamChunk['finishReason'] = 'error'
-              if (finishReason === 'stop') {
-                reason = 'stop'
-              } else if (finishReason === 'length') {
-                reason = 'length'
-              } else if (finishReason === 'tool_calls') {
-                reason = 'tool_calls'
-              }
-
-              // 解析 usage 信息
-              const usage = parsed.usage
-                ? {
-                    promptTokens: parsed.usage.prompt_tokens,
-                    completionTokens: parsed.usage.completion_tokens,
-                    totalTokens: parsed.usage.total_tokens,
-                  }
-                : undefined
-
-              if (toolCallsAccumulator.size > 0) {
-                const toolCalls: ToolCall[] = Array.from(toolCallsAccumulator.values()).map((tc) => ({
-                  id: tc.id,
-                  type: 'function' as const,
-                  function: {
-                    name: tc.name,
-                    arguments: tc.arguments,
-                  },
-                  // 传递 thoughtSignature（如果存在）
-                  thoughtSignature: tc.thoughtSignature,
-                }))
-                yield { content: '', isFinished: true, finishReason: reason, tool_calls: toolCalls, usage }
-              } else {
-                yield { content: '', isFinished: true, finishReason: reason, usage }
-              }
-              return
-            }
-          } catch {
-            // 忽略解析错误，继续处理下一行
+          if (delta) {
+            yield { content: delta, isFinished: false }
           }
         }
       }
 
-      // 流读取完成后的处理（如果没有收到 [DONE] 或 finish_reason）
-      // 这种情况可能发生在某些 API 不发送标准结束标记时
-      aiLogger.info('OpenAI-Compatible', '流循环结束，执行兜底处理', {
-        totalChunks,
-        totalContentLength: totalContent.length,
-        toolCallsCount: toolCallsAccumulator.size,
-        bufferRemaining: buffer.length,
-      })
+      const finishReason = mapFinishReason(await result.finishReason)
+      const toolCalls = await result.toolCalls
+      const usage = mapUsage(await result.totalUsage)
 
-      // 如果有累积的 tool_calls，发送它们
-      if (toolCallsAccumulator.size > 0) {
-        const toolCalls: ToolCall[] = Array.from(toolCallsAccumulator.values()).map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.name,
-            arguments: tc.arguments,
-          },
-          // 传递 thoughtSignature（如果存在）
-          thoughtSignature: tc.thoughtSignature,
-        }))
-        yield { content: '', isFinished: true, finishReason: 'tool_calls', tool_calls: toolCalls }
-      } else {
-        // 没有 tool_calls，发送普通完成信号
-        yield { content: '', isFinished: true, finishReason: 'stop' }
+      yield {
+        content: '',
+        isFinished: true,
+        finishReason,
+        tool_calls: toolCalls.length > 0 ? this.mapToolCalls(toolCalls) : undefined,
+        usage,
       }
     } catch (error) {
-      // 如果是中止错误，正常返回
       if (error instanceof Error && error.name === 'AbortError') {
         yield { content: '', isFinished: true, finishReason: 'stop' }
         return
       }
-      aiLogger.error('OpenAI-Compatible', '流处理异常', { error: String(error) })
+      // 使用 providerId 作为日志前缀，便于区分兼容服务来源
+      aiLogger.error(this.providerId, '流式请求失败', { error: String(error) })
       throw error
-    } finally {
-      reader.releaseLock()
     }
   }
 
@@ -395,12 +303,11 @@ export class OpenAICompatibleService implements ILLMService {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       }
-      this.setAuthHeaders(headers)
+      if (this.apiKey && this.apiKey !== 'sk-no-key-required') {
+        headers['Authorization'] = `Bearer ${this.apiKey}`
+      }
 
-      const url = `${this.baseUrl}/chat/completions`
-
-      // 发送一个简单的测试请求来验证连接和认证
-      const response = await fetch(url, {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -410,16 +317,14 @@ export class OpenAICompatibleService implements ILLMService {
         }),
       })
 
-      // 200 表示成功，401/403 表示认证失败，其他状态可能是参数问题但服务可达
       if (response.ok) {
         return { success: true }
       }
 
-      // 尝试获取错误详情
       const errorText = await response.text()
       let errorMessage = `HTTP ${response.status}`
       try {
-        const errorJson = JSON.parse(errorText)
+        const errorJson = JSON.parse(errorText) as { error?: { message?: string }; message?: string }
         errorMessage = errorJson.error?.message || errorJson.message || errorMessage
       } catch {
         if (errorText) {
@@ -427,13 +332,10 @@ export class OpenAICompatibleService implements ILLMService {
         }
       }
 
-      // 认证失败
       if (response.status === 401 || response.status === 403) {
         return { success: false, error: errorMessage }
       }
 
-      // 其他错误（如 400 参数错误）但服务可达，认为验证通过
-      // 因为这说明认证成功了，只是请求参数有问题
       return { success: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)

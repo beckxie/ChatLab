@@ -11,6 +11,98 @@ import type { IpcContext } from './types'
 // 用于跟踪活跃的 Agent 请求，支持中止操作
 const activeAgentRequests = new Map<string, AbortController>()
 
+/**
+ * 格式化 AI 报错信息，输出更友好的提示
+ */
+function formatAIError(error: unknown): string {
+  const candidates: unknown[] = []
+  if (error) {
+    candidates.push(error)
+  }
+
+  const errorObj = error as {
+    lastError?: unknown
+    errors?: unknown[]
+  }
+
+  if (errorObj?.lastError) {
+    candidates.push(errorObj.lastError)
+  }
+
+  if (Array.isArray(errorObj?.errors)) {
+    candidates.push(...errorObj.errors)
+  }
+
+  let rawMessage = ''
+  let statusCode: number | undefined
+  let retrySeconds: number | undefined
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') {
+      if (!rawMessage && typeof candidate === 'string') {
+        rawMessage = candidate
+      }
+      continue
+    }
+
+    const record = candidate as Record<string, unknown>
+    if (typeof record.statusCode === 'number') {
+      statusCode = record.statusCode
+    }
+
+    if (!rawMessage && typeof record.message === 'string') {
+      rawMessage = record.message
+    }
+
+    if (!rawMessage && record.data && typeof record.data === 'object') {
+      const data = record.data as { error?: { message?: string } }
+      if (data.error?.message) {
+        rawMessage = data.error.message
+      }
+    }
+
+    if (record.responseBody && typeof record.responseBody === 'string') {
+      const responseBody = record.responseBody
+      try {
+        const parsed = JSON.parse(responseBody) as { error?: { message?: string } }
+        if (!rawMessage && parsed.error?.message) {
+          rawMessage = parsed.error.message
+        }
+      } catch {
+        if (!rawMessage) {
+          rawMessage = responseBody
+        }
+      }
+    }
+
+    if (rawMessage) {
+      const retryMatch = rawMessage.match(/retry in ([0-9.]+)s/i)
+      if (retryMatch) {
+        retrySeconds = Math.ceil(Number(retryMatch[1]))
+      }
+    }
+  }
+
+  const fallbackMessage = rawMessage || String(error)
+  const lowerMessage = fallbackMessage.toLowerCase()
+
+  if (statusCode === 429 || lowerMessage.includes('quota') || lowerMessage.includes('resource_exhausted')) {
+    return retrySeconds
+      ? `Gemini 配额已用尽，请等待 ${retrySeconds} 秒后重试，或更换/升级配额。`
+      : 'Gemini 配额已用尽，请稍后重试或更换/升级配额。'
+  }
+
+  if (statusCode === 503 || lowerMessage.includes('overloaded') || lowerMessage.includes('unavailable')) {
+    return 'Gemini 模型繁忙，请稍后重试。'
+  }
+
+  if (fallbackMessage.length > 300) {
+    return `${fallbackMessage.slice(0, 300)}...`
+  }
+
+  return fallbackMessage
+}
+
 export function registerAIHandlers({ win }: IpcContext): void {
   console.log('[IPC] Registering AI handlers...')
 
@@ -464,11 +556,15 @@ export function registerAIHandlers({ win }: IpcContext): void {
               aiLogger.info('IPC', `Agent 请求已中止: ${requestId}`)
               return
             }
-            aiLogger.error('IPC', `Agent 执行出错: ${requestId}`, { error: String(error) })
+            const friendlyError = formatAIError(error)
+            aiLogger.error('IPC', `Agent 执行出错: ${requestId}`, {
+              error: String(error),
+              friendlyError,
+            })
             // 发送错误 chunk
             win.webContents.send('agent:streamChunk', {
               requestId,
-              chunk: { type: 'error', error: String(error), isFinished: true },
+              chunk: { type: 'error', error: friendlyError, isFinished: true },
             })
             // 发送完成事件（带错误信息），确保前端 promise 能 resolve
             win.webContents.send('agent:complete', {
@@ -478,7 +574,7 @@ export function registerAIHandlers({ win }: IpcContext): void {
                 toolsUsed: [],
                 toolRounds: 0,
                 totalUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-                error: String(error),
+                error: friendlyError,
               },
             })
           } finally {

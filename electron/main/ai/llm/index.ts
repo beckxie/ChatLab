@@ -6,7 +6,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import { getAiDataDir, ensureDir } from '../../paths'
+import { getAiDataDir } from '../../paths'
 import type {
   LLMConfig,
   LLMProvider,
@@ -19,8 +19,6 @@ import type {
   AIConfigStore,
 } from './types'
 import { MAX_CONFIG_COUNT } from './types'
-import { DeepSeekService, DEEPSEEK_INFO } from './deepseek'
-import { QwenService, QWEN_INFO } from './qwen'
 import { GeminiService, GEMINI_INFO } from './gemini'
 import { OpenAICompatibleService, OPENAI_COMPATIBLE_INFO } from './openai-compatible'
 import { aiLogger } from '../logger'
@@ -29,6 +27,31 @@ import { aiLogger } from '../logger'
 export * from './types'
 
 // ==================== 新增提供商信息 ====================
+
+/** DeepSeek 提供商信息 */
+const DEEPSEEK_INFO: ProviderInfo = {
+  id: 'deepseek',
+  name: 'DeepSeek',
+  description: 'DeepSeek AI 大语言模型',
+  defaultBaseUrl: 'https://api.deepseek.com/v1',
+  models: [
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', description: '通用对话模型' },
+    { id: 'deepseek-coder', name: 'DeepSeek Coder', description: '代码生成模型' },
+  ],
+}
+
+/** 通义千问 (Qwen) 提供商信息 */
+const QWEN_INFO: ProviderInfo = {
+  id: 'qwen',
+  name: '通义千问',
+  description: '阿里云通义千问大语言模型',
+  defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  models: [
+    { id: 'qwen-turbo', name: 'Qwen Turbo', description: '通义千问超大规模语言模型，速度快' },
+    { id: 'qwen-plus', name: 'Qwen Plus', description: '通义千问超大规模语言模型，效果好' },
+    { id: 'qwen-max', name: 'Qwen Max', description: '通义千问千亿级别超大规模语言模型' },
+  ],
+}
 
 /** MiniMax 提供商信息 */
 const MINIMAX_INFO: ProviderInfo = {
@@ -325,28 +348,75 @@ interface ExtendedLLMConfig extends LLMConfig {
 }
 
 /**
+ * 不再自动补齐 Base URL，对 DeepSeek/Qwen 的格式做显式校验
+ */
+function validateProviderBaseUrl(provider: LLMProvider, baseUrl?: string): void {
+  if (!baseUrl) return
+
+  const normalized = baseUrl.replace(/\/+$/, '')
+
+  if (provider === 'deepseek') {
+    if (normalized.endsWith('/chat/completions')) {
+      throw new Error('DeepSeek Base URL 请填写到 /v1 层级，不要包含 /chat/completions')
+    }
+    if (!normalized.endsWith('/v1')) {
+      throw new Error('DeepSeek Base URL 需要以 /v1 结尾')
+    }
+  }
+
+  if (provider === 'qwen') {
+    if (normalized.endsWith('/chat/completions')) {
+      throw new Error('通义千问 Base URL 请填写到 /v1 层级，不要包含 /chat/completions')
+    }
+    if (!normalized.endsWith('/v1')) {
+      throw new Error('通义千问 Base URL 需要以 /v1 结尾')
+    }
+    if (normalized.includes('dashscope.aliyuncs.com') && !normalized.includes('/compatible-mode/')) {
+      throw new Error('通义千问 Base URL 需要包含 /compatible-mode/v1')
+    }
+  }
+}
+
+/**
  * 创建 LLM 服务实例
  */
 export function createLLMService(config: ExtendedLLMConfig): ILLMService {
   // 获取提供商的默认 baseUrl
   const providerInfo = getProviderInfo(config.provider)
   const baseUrl = config.baseUrl || providerInfo?.defaultBaseUrl
+  // 未显式指定时使用提供商的首个模型作为默认模型
+  const resolvedModel = config.model || providerInfo?.models?.[0]?.id
+  // 不自动补齐，发现不合法直接抛错给用户
+  validateProviderBaseUrl(config.provider, baseUrl)
 
   switch (config.provider) {
-    case 'deepseek':
-      return new DeepSeekService(config.apiKey, config.model, config.baseUrl)
-    case 'qwen':
-      return new QwenService(config.apiKey, config.model, config.baseUrl)
     case 'gemini':
-      return new GeminiService(config.apiKey, config.model, config.baseUrl)
+      return new GeminiService(config.apiKey, resolvedModel, config.baseUrl)
     // 新增的官方API都使用 OpenAI 兼容格式
+    case 'deepseek':
+    case 'qwen':
     case 'minimax':
     case 'glm':
     case 'kimi':
     case 'doubao':
-      return new OpenAICompatibleService(config.apiKey, config.model, baseUrl)
+      // DeepSeek/Qwen 走 OpenAI 兼容实现时，禁用本地思考注入
+      return new OpenAICompatibleService(
+        config.apiKey,
+        resolvedModel,
+        baseUrl,
+        config.provider === 'deepseek' || config.provider === 'qwen' ? false : undefined,
+        config.provider,
+        providerInfo?.models
+      )
     case 'openai-compatible':
-      return new OpenAICompatibleService(config.apiKey, config.model, config.baseUrl, config.disableThinking)
+      return new OpenAICompatibleService(
+        config.apiKey,
+        resolvedModel,
+        config.baseUrl,
+        config.disableThinking,
+        config.provider,
+        providerInfo?.models
+      )
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`)
   }

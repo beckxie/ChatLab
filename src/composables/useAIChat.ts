@@ -28,7 +28,7 @@ export interface ToolBlockContent {
 // 内容块类型（用于 AI 消息的流式混合渲染）
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'think'; tag: string; text: string } // 思考内容块
+  | { type: 'think'; tag: string; text: string; durationMs?: number } // 思考内容块
   | {
       type: 'tool'
       tool: ToolBlockContent
@@ -251,6 +251,7 @@ export function useAIChat(
     }
     messages.value.push(aiMessage)
     const aiMessageIndex = messages.value.length - 1
+    let hasStreamError = false
 
     // 辅助函数：更新 AI 消息
     const updateAIMessage = (updates: Partial<ChatMessage>) => {
@@ -262,8 +263,14 @@ export function useAIChat(
 
     // 辅助函数：获取或创建当前文本块
     const appendTextToBlocks = (text: string) => {
+      if (!text) return
       const blocks = messages.value[aiMessageIndex].contentBlocks || []
       const lastBlock = blocks[blocks.length - 1]
+
+      if (text.trim().length === 0 && (!lastBlock || lastBlock.type !== 'text')) {
+        // 纯空白且没有可追加的文本块时，避免创建空块
+        return
+      }
 
       if (lastBlock && lastBlock.type === 'text') {
         // 追加到现有文本块
@@ -280,15 +287,40 @@ export function useAIChat(
     }
 
     // 辅助函数：追加思考块（单独渲染，不写入 content）
-    const appendThinkToBlocks = (text: string, tag?: string) => {
+    const appendThinkToBlocks = (text: string, tag?: string, durationMs?: number) => {
+      if (!text && durationMs === undefined) return
       const blocks = messages.value[aiMessageIndex].contentBlocks || []
       const thinkTag = tag || 'think'
       const lastBlock = blocks[blocks.length - 1]
 
+      if (
+        text.trim().length === 0 &&
+        durationMs === undefined &&
+        (!lastBlock || lastBlock.type !== 'think' || lastBlock.tag !== thinkTag)
+      ) {
+        // 纯空白且没有可追加的思考块时，避免创建空块
+        return
+      }
+
+      let targetBlock = lastBlock
       if (lastBlock && lastBlock.type === 'think' && lastBlock.tag === thinkTag) {
         lastBlock.text += text
-      } else {
-        blocks.push({ type: 'think', tag: thinkTag, text })
+      } else if (text.trim().length > 0) {
+        targetBlock = { type: 'think', tag: thinkTag, text }
+        blocks.push(targetBlock)
+      } else if (durationMs !== undefined) {
+        // 仅更新耗时时，向前查找最近的同标签思考块
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const block = blocks[i]
+          if (block.type === 'think' && block.tag === thinkTag) {
+            targetBlock = block
+            break
+          }
+        }
+      }
+
+      if (durationMs !== undefined && targetBlock && targetBlock.type === 'think') {
+        targetBlock.durationMs = durationMs
       }
 
       updateAIMessage({ contentBlocks: [...blocks] })
@@ -397,6 +429,8 @@ export function useAIChat(
               // 思考内容 - 写入思考块
               if (chunk.content) {
                 appendThinkToBlocks(chunk.content, chunk.thinkTag)
+              } else if (chunk.thinkDurationMs !== undefined) {
+                appendThinkToBlocks('', chunk.thinkTag, chunk.thinkDurationMs)
               }
               break
 
@@ -459,6 +493,13 @@ export function useAIChat(
                 // 更新对应工具块状态为错误
                 updateToolBlockStatus(currentToolStatus.value.name, 'error')
               }
+              if (!hasStreamError) {
+                hasStreamError = true
+                const errorMessage = chunk.error || '未知错误'
+                // 提前将错误显示给用户，避免无反馈
+                appendTextToBlocks(`\n\n❌ 处理失败：${errorMessage}`)
+                updateAIMessage({ isStreaming: false })
+              }
               break
           }
         },
@@ -503,9 +544,13 @@ export function useAIChat(
         console.log('[AI] 对话已保存')
       } else {
         // 处理错误
+        const errorText = `❌ 处理失败：${result.error || '未知错误'}`
+        if (!hasStreamError) {
+          // 只在未展示过错误时追加
+          appendTextToBlocks(`\n\n${errorText}`)
+        }
         messages.value[aiMessageIndex] = {
           ...messages.value[aiMessageIndex],
-          content: `❌ 处理失败：${result.error || '未知错误'}`,
           isStreaming: false,
         }
       }

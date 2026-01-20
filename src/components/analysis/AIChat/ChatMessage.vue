@@ -55,15 +55,33 @@ function getThinkLabel(tag: string): string {
   return t('think.labels.other', { tag })
 }
 
+// 格式化思考耗时（毫秒 -> 秒）
+function formatThinkDuration(durationMs?: number): string {
+  if (!durationMs) return ''
+  const seconds = (durationMs / 1000).toFixed(1)
+  return t('think.duration', { seconds })
+}
+
 // 渲染后的 HTML（用于用户消息或纯文本 AI 消息）
 const renderedContent = computed(() => {
   if (!props.content) return ''
   return md.render(props.content)
 })
 
-// 是否使用 contentBlocks 渲染（AI 消息且有 contentBlocks）
+// 过滤无内容的文本/思考块，避免显示空气泡
+const visibleBlocks = computed(() => {
+  const blocks = props.contentBlocks || []
+  return blocks.filter((block) => {
+    if (block.type === 'text' || block.type === 'think') {
+      return block.text.trim().length > 0
+    }
+    return true
+  })
+})
+
+// 是否使用 contentBlocks 渲染（AI 消息且有内容块）
 const useBlocksRendering = computed(() => {
-  return props.role === 'assistant' && props.contentBlocks && props.contentBlocks.length > 0
+  return props.role === 'assistant' && visibleBlocks.value.length > 0
 })
 
 // 格式化时间参数显示
@@ -226,7 +244,7 @@ function formatToolParams(tool: ToolBlockContent): string {
       <!-- AI 消息：混合内容块布局 -->
       <template v-else-if="useBlocksRendering">
         <div class="space-y-3">
-          <template v-for="(block, idx) in contentBlocks" :key="idx">
+          <template v-for="(block, idx) in visibleBlocks" :key="idx">
             <!-- 文本块 -->
             <div
               v-if="block.type === 'text'"
@@ -238,7 +256,7 @@ function formatToolParams(tool: ToolBlockContent): string {
               />
               <!-- 流式输出光标（只在最后一个文本块显示） -->
               <span
-                v-if="isStreaming && idx === contentBlocks!.length - 1"
+                v-if="isStreaming && idx === visibleBlocks.length - 1"
                 class="ml-1 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-pink-500"
               />
             </div>
@@ -246,12 +264,26 @@ function formatToolParams(tool: ToolBlockContent): string {
             <!-- 思考块（默认折叠） -->
             <details
               v-else-if="block.type === 'think'"
-              class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-700 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200"
+              class="rounded-2xl px-2 py-1 text-xs text-gray-600 dark:text-gray-400"
             >
-              <summary class="cursor-pointer select-none text-sm font-medium text-gray-500 dark:text-gray-400">
+              <summary class="cursor-pointer select-none text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ getThinkLabel(block.tag) }}
+                <span v-if="block.durationMs" class="ml-2 text-xs text-gray-400 dark:text-gray-500">
+                  {{ formatThinkDuration(block.durationMs) }}
+                </span>
+                <span
+                  v-if="isStreaming && idx === visibleBlocks.length - 1"
+                  class="ml-2 inline-flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500"
+                >
+                  <span>{{ t('think.loading') }}</span>
+                  <span class="flex gap-0.5">
+                    <span class="h-1 w-1 animate-bounce rounded-full bg-gray-400 [animation-delay:0ms]" />
+                    <span class="h-1 w-1 animate-bounce rounded-full bg-gray-400 [animation-delay:150ms]" />
+                    <span class="h-1 w-1 animate-bounce rounded-full bg-gray-400 [animation-delay:300ms]" />
+                  </span>
+                </span>
               </summary>
-              <div class="mt-2 prose prose-sm dark:prose-invert max-w-none leading-relaxed">
+              <div class="mt-2 prose prose-sm dark:prose-invert max-w-none leading-relaxed text-xs">
                 <div v-html="renderMarkdown(block.text)" />
               </div>
             </details>
@@ -304,9 +336,7 @@ function formatToolParams(tool: ToolBlockContent): string {
           <div
             v-if="
               isStreaming &&
-              contentBlocks &&
-              contentBlocks.length > 0 &&
-              contentBlocks[contentBlocks.length - 1].type === 'tool'
+              visibleBlocks.length > 0 && visibleBlocks[visibleBlocks.length - 1].type === 'tool'
             "
             class="flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-600 dark:bg-gray-800 dark:text-gray-400"
           >
@@ -353,12 +383,14 @@ function formatToolParams(tool: ToolBlockContent): string {
     },
     "think": {
       "labels": {
-        "think": "思考",
+        "think": "已思考",
         "analysis": "分析",
         "reasoning": "推理",
         "reflection": "反思",
         "other": "思考（{tag}）"
-      }
+      },
+      "loading": "思考中",
+      "duration": "耗时 {seconds}s"
     },
     "toolParams": {
       "keywords": "关键词",
@@ -391,7 +423,9 @@ function formatToolParams(tool: ToolBlockContent): string {
         "reasoning": "Reasoning",
         "reflection": "Reflection",
         "other": "Thinking ({tag})"
-      }
+      },
+      "loading": "Thinking",
+      "duration": "Took {seconds}s"
     },
     "toolParams": {
       "keywords": "Keywords",

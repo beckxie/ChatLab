@@ -775,6 +775,7 @@ interface AgentStreamChunk {
   type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'done' | 'error'
   content?: string
   thinkTag?: string
+  thinkDurationMs?: number
   toolName?: string
   toolParams?: Record<string, unknown>
   toolResult?: unknown

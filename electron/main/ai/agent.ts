@@ -96,6 +96,8 @@ type StreamMode = 'text' | 'think' | 'tool_call'
 function createStreamParser(handlers: {
   onText: (text: string) => void
   onThink: (text: string, tag: string) => void
+  onThinkStart?: (tag: string) => void
+  onThinkEnd?: (tag: string) => void
 }): { push: (text: string) => void; flush: () => void } {
   let buffer = ''
   let mode: StreamMode = 'text'
@@ -165,6 +167,7 @@ function createStreamParser(handlers: {
           // 进入思考模式
           currentThinkTag = hit.tag.slice(1, -1)
           mode = 'think'
+          handlers.onThinkStart?.(currentThinkTag)
           buffer = buffer.slice(startTags[startTagsLower.indexOf(hit.tag)].length)
           continue
         }
@@ -194,6 +197,7 @@ function createStreamParser(handlers: {
 
         buffer = buffer.slice(endIndex + endTag.length)
         mode = 'text'
+        handlers.onThinkEnd?.(currentThinkTag)
         currentThinkTag = ''
         continue
       }
@@ -265,6 +269,8 @@ export interface AgentStreamChunk {
   content?: string
   /** 思考标签名称（type=think 时） */
   thinkTag?: string
+  /** 思考耗时（毫秒，type=think 时可选） */
+  thinkDurationMs?: number
   /** 工具名称（type=tool_start/tool_result 时） */
   toolName?: string
   /** 工具调用参数（type=tool_start 时） */
@@ -680,13 +686,23 @@ export class Agent {
       let accumulatedContent = ''
       let roundContent = ''
       let toolCalls: ToolCall[] | undefined
+      let thinkStartAt: number | null = null // 记录思考开始时间
       const parser = createStreamParser({
         onText: (text) => {
           roundContent += text
           onChunk({ type: 'content', content: text })
         },
+        onThinkStart: () => {
+          thinkStartAt = Date.now()
+        },
         onThink: (text, tag) => {
           onChunk({ type: 'think', content: text, thinkTag: tag })
+        },
+        onThinkEnd: (tag) => {
+          if (thinkStartAt === null) return
+          const durationMs = Date.now() - thinkStartAt
+          thinkStartAt = null
+          onChunk({ type: 'think', content: '', thinkTag: tag, thinkDurationMs: durationMs })
         },
       })
 
@@ -851,13 +867,23 @@ export class Agent {
 
     // 最后一轮不带 tools（传入 abortSignal）
     let finalRawContent = ''
+    let finalThinkStartAt: number | null = null // 记录最终思考开始时间
     const finalParser = createStreamParser({
       onText: (text) => {
         finalContent += text
         onChunk({ type: 'content', content: text })
       },
+      onThinkStart: () => {
+        finalThinkStartAt = Date.now()
+      },
       onThink: (text, tag) => {
         onChunk({ type: 'think', content: text, thinkTag: tag })
+      },
+      onThinkEnd: (tag) => {
+        if (finalThinkStartAt === null) return
+        const durationMs = Date.now() - finalThinkStartAt
+        finalThinkStartAt = null
+        onChunk({ type: 'think', content: '', thinkTag: tag, thinkDurationMs: durationMs })
       },
     })
     for await (const chunk of chatStream(this.messages, {

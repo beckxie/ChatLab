@@ -117,7 +117,7 @@ export interface AIConversation {
  */
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'think'; tag: string; text: string } // 思考内容块
+  | { type: 'think'; tag: string; text: string; durationMs?: number } // 思考内容块
   | {
       type: 'tool'
       tool: {
