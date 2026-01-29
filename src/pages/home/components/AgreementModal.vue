@@ -50,13 +50,13 @@ onMounted(() => {
 })
 
 // 倒计时状态
-const countdown = ref(15)
+const countdown = ref(10)
 let timer: ReturnType<typeof setInterval> | null = null
 
 // 监听 modal 打开状态，启动倒计时
 watch(isOpen, (open) => {
   if (open) {
-    countdown.value = 15
+    countdown.value = 10
     timer = setInterval(() => {
       if (countdown.value > 0) {
         countdown.value--
