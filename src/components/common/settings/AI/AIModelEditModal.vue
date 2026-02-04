@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
 import AlertTips from './AlertTips.vue'
+import ApiKeyInput from './ApiKeyInput.vue'
 import Tabs from '@/components/UI/Tabs.vue'
 
 const { t } = useI18n()
@@ -190,7 +191,7 @@ function initFromConfig(config: AIServiceConfig) {
   formData.value = {
     name: config.name,
     provider: config.provider,
-    apiKey: '',
+    apiKey: config.apiKey || '', // 编辑时填充已有的 API Key
     model: config.model || '',
     baseUrl: config.baseUrl || '',
     disableThinking: config.disableThinking ?? true, // 默认禁用
@@ -542,37 +543,16 @@ watch(
             </div>
 
             <!-- API Key -->
-            <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">API Key</label>
-              <div class="flex gap-2">
-                <UInput
-                  v-model="formData.apiKey"
-                  type="password"
-                  :placeholder="mode === 'edit' ? t('apiKeyPlaceholderEdit') : t('apiKeyPlaceholder')"
-                  class="flex-1"
-                />
-                <UButton :loading="isValidating" :disabled="!formData.apiKey" variant="soft" @click="validateKey">
-                  {{ t('validate') }}
-                </UButton>
-              </div>
-              <!-- 验证结果 -->
-              <div v-if="validationMessage" class="mt-2">
-                <div
-                  v-if="validationResult === 'valid'"
-                  class="flex items-center gap-1 text-sm text-green-600 dark:text-green-400"
-                >
-                  <UIcon name="i-heroicons-check-circle" class="h-4 w-4" />
-                  {{ validationMessage }}
-                </div>
-                <div
-                  v-else-if="validationResult === 'invalid'"
-                  class="flex items-center gap-1 text-sm text-amber-600 dark:text-amber-400"
-                >
-                  <UIcon name="i-heroicons-exclamation-triangle" class="h-4 w-4" />
-                  {{ validationMessage }}
-                </div>
-              </div>
-            </div>
+            <ApiKeyInput
+              v-model="formData.apiKey"
+              :placeholder="t('apiKeyPlaceholder')"
+              :validate-loading="isValidating"
+              :validate-disabled="!formData.apiKey"
+              :validate-text="t('validate')"
+              :validation-result="validationResult"
+              :validation-message="validationMessage"
+              @validate="validateKey"
+            />
 
             <!-- 模型选择 -->
             <div>
@@ -664,14 +644,12 @@ watch(
               </button>
 
               <div v-if="showAdvanced" class="mt-3 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    API Key
-                    <span class="font-normal text-gray-400">{{ t('optional') }}</span>
-                  </label>
-                  <UInput v-model="formData.apiKey" type="password" :placeholder="t('apiKeyPlaceholderLocal')" />
-                  <p class="mt-1 text-xs text-gray-500">{{ t('apiKeyHintLocal') }}</p>
-                </div>
+                <ApiKeyInput
+                  v-model="formData.apiKey"
+                  :placeholder="t('apiKeyPlaceholderLocal')"
+                  :optional-text="t('optional')"
+                  :hint="t('apiKeyHintLocal')"
+                />
               </div>
             </div>
           </template>
@@ -695,42 +673,16 @@ watch(
             </div>
 
             <!-- API Key -->
-            <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">API Key</label>
-              <div class="flex gap-2">
-                <UInput
-                  v-model="formData.apiKey"
-                  type="password"
-                  :placeholder="mode === 'edit' ? t('apiKeyPlaceholderEdit') : t('apiKeyPlaceholder')"
-                  class="flex-1"
-                />
-                <UButton
-                  :loading="isValidating"
-                  :disabled="!formData.apiKey || !formData.baseUrl"
-                  variant="soft"
-                  @click="validateKey"
-                >
-                  {{ t('validate') }}
-                </UButton>
-              </div>
-              <!-- 验证结果 -->
-              <div v-if="validationMessage" class="mt-2">
-                <div
-                  v-if="validationResult === 'valid'"
-                  class="flex items-center gap-1 text-sm text-green-600 dark:text-green-400"
-                >
-                  <UIcon name="i-heroicons-check-circle" class="h-4 w-4" />
-                  {{ validationMessage }}
-                </div>
-                <div
-                  v-else-if="validationResult === 'invalid'"
-                  class="flex items-center gap-1 text-sm text-amber-600 dark:text-amber-400"
-                >
-                  <UIcon name="i-heroicons-exclamation-triangle" class="h-4 w-4" />
-                  {{ validationMessage }}
-                </div>
-              </div>
-            </div>
+            <ApiKeyInput
+              v-model="formData.apiKey"
+              :placeholder="t('apiKeyPlaceholder')"
+              :validate-loading="isValidating"
+              :validate-disabled="!formData.apiKey || !formData.baseUrl"
+              :validate-text="t('validate')"
+              :validation-result="validationResult"
+              :validation-message="validationMessage"
+              @validate="validateKey"
+            />
 
             <!-- 模型名称 -->
             <div>

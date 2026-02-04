@@ -22,6 +22,7 @@ import { MAX_CONFIG_COUNT } from './types'
 import { GeminiService, GEMINI_INFO } from './gemini'
 import { OpenAICompatibleService, OPENAI_COMPATIBLE_INFO } from './openai-compatible'
 import { aiLogger, extractErrorInfo, extractErrorStack } from '../logger'
+import { encryptApiKey, decryptApiKey, isEncrypted } from './crypto'
 
 // 导出类型
 export * from './types'
@@ -172,7 +173,8 @@ function migrateLegacyConfig(legacy: LegacyStoredConfig): AIConfigStore {
 // ==================== 多配置管理 ====================
 
 /**
- * 加载配置存储（自动处理迁移）
+ * 加载配置存储（自动处理迁移和解密）
+ * 返回的配置中 API Key 已解密
  */
 export function loadConfigStore(): AIConfigStore {
   const configPath = getConfigPath()
@@ -185,24 +187,73 @@ export function loadConfigStore(): AIConfigStore {
     const content = fs.readFileSync(configPath, 'utf-8')
     const data = JSON.parse(content)
 
-    // 检查是否需要迁移
+    // 检查是否需要迁移旧格式
     if (isLegacyConfig(data)) {
       aiLogger.info('LLM', '检测到旧配置格式，执行迁移')
       const migrated = migrateLegacyConfig(data)
       saveConfigStore(migrated)
-      return migrated
+      return loadConfigStore() // 重新加载以触发加密迁移
     }
 
-    return data as AIConfigStore
-  } catch {
+    const store = data as AIConfigStore
+
+    // 检查是否需要加密迁移（明文 -> 加密）
+    let needsEncryptionMigration = false
+    const decryptedConfigs = store.configs.map((config) => {
+      if (config.apiKey && !isEncrypted(config.apiKey)) {
+        // 发现明文 API Key，需要加密迁移
+        needsEncryptionMigration = true
+        aiLogger.info('LLM', `配置 "${config.name}" 的 API Key 需要加密迁移`)
+      }
+      return {
+        ...config,
+        apiKey: config.apiKey ? decryptApiKey(config.apiKey) : '',
+      }
+    })
+
+    // 如果有明文 API Key，执行加密迁移
+    if (needsEncryptionMigration) {
+      aiLogger.info('LLM', '执行 API Key 加密迁移')
+      saveConfigStoreRaw({
+        ...store,
+        configs: store.configs.map((config) => ({
+          ...config,
+          apiKey: config.apiKey ? encryptApiKey(decryptApiKey(config.apiKey)) : '',
+        })),
+      })
+    }
+
+    return {
+      ...store,
+      configs: decryptedConfigs,
+    }
+  } catch (error) {
+    aiLogger.error('LLM', '加载配置失败', error)
     return { configs: [], activeConfigId: null }
   }
 }
 
 /**
- * 保存配置存储
+ * 保存配置存储（自动加密 API Key）
+ * 传入的配置中 API Key 应为明文
  */
 export function saveConfigStore(store: AIConfigStore): void {
+  // 加密所有 API Key 后保存
+  const encryptedStore: AIConfigStore = {
+    ...store,
+    configs: store.configs.map((config) => ({
+      ...config,
+      apiKey: config.apiKey ? encryptApiKey(config.apiKey) : '',
+    })),
+  }
+  saveConfigStoreRaw(encryptedStore)
+}
+
+/**
+ * 保存配置存储（原始写入，不加密）
+ * 内部使用
+ */
+function saveConfigStoreRaw(store: AIConfigStore): void {
   const configPath = getConfigPath()
   const dir = path.dirname(configPath)
 

@@ -281,10 +281,9 @@ export function registerAIHandlers({ win }: IpcContext): void {
    */
   ipcMain.handle('llm:getAllConfigs', async () => {
     const configs = llm.getAllConfigs()
-    // 脱敏 API Key
+    // 返回 API Key
     return configs.map((c) => ({
       ...c,
-      apiKey: c.apiKey ? `${c.apiKey.slice(0, 4)}****${c.apiKey.slice(-4)}` : '',
       apiKeySet: !!c.apiKey,
     }))
   })
@@ -320,9 +319,6 @@ export function registerAIHandlers({ win }: IpcContext): void {
             success: true,
             config: {
               ...result.config,
-              apiKey: result.config.apiKey
-                ? `${result.config.apiKey.slice(0, 4)}****${result.config.apiKey.slice(-4)}`
-                : '',
               apiKeySet: !!result.config.apiKey,
             },
           }
