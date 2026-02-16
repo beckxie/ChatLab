@@ -59,11 +59,11 @@ export function registerWindowHandlers(ctx: IpcContext): void {
     const { nativeTheme } = require('electron')
     nativeTheme.themeSource = mode
 
-    // Windows 上动态更新图标颜色以匹配主题
+    // Windows 上动态更新 overlay 颜色以匹配主题
     if (process.platform === 'win32' && win) {
       const isDark = nativeTheme.shouldUseDarkColors
       win.setTitleBarOverlay({
-        color: '#00000000', // 透明背景
+        color: isDark ? '#111827' : '#f9fafb', // dark: gray-900, light: gray-50
         symbolColor: isDark ? '#a1a1aa' : '#52525b', // dark: zinc-400, light: zinc-600
         height: 32,
       })
