@@ -54,8 +54,8 @@ const { dailyChartData } = useDailyTrend(props.dailyActivity)
 // 消息类型图表数据
 const typeChartData = computed<EChartPieData>(() => {
   return {
-    labels: props.messageTypes.map((t) => getMessageTypeName(t.type)),
-    values: props.messageTypes.map((t) => t.count),
+    labels: props.messageTypes.map((item) => getMessageTypeName(item.type, t)),
+    values: props.messageTypes.map((item) => item.count),
   }
 })
 

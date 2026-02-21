@@ -220,7 +220,7 @@ onMounted(() => {
             icon="i-heroicons-plus-circle"
             @click="showIncrementalImportModal = true"
           >
-            {{ t('analysis.incrementalImport', '增量导入') }}
+            {{ t('analysis.tooltip.incrementalImport') }}
           </UButton>
           <UButton
             color="primary"
@@ -229,7 +229,7 @@ onMounted(() => {
             icon="i-heroicons-chat-bubble-bottom-center-text"
             @click="openChatRecordViewer"
           >
-            {{ t('analysis.chatViewer', '聊天记录查看器') }}
+            {{ t('analysis.tooltip.chatViewer') }}
           </UButton>
           <UTooltip :text="t('analysis.tooltip.sessionIndex')">
             <UButton

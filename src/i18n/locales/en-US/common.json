@@ -40,6 +40,28 @@
     "members": "members",
     "days": "days"
   },
+  "messageType": {
+    "text": "Text",
+    "image": "Image",
+    "voice": "Voice",
+    "video": "Video",
+    "file": "File",
+    "emoji": "Emoji",
+    "link": "Link",
+    "location": "Location",
+    "redPacket": "Red Packet",
+    "transfer": "Transfer",
+    "poke": "Poke",
+    "call": "Call",
+    "share": "Share",
+    "reply": "Reply",
+    "forward": "Forward",
+    "contact": "Contact",
+    "system": "System",
+    "recall": "Recalled",
+    "other": "Other",
+    "unknown": "Unknown"
+  },
   "weekday": {
     "mon": "Mon",
     "tue": "Tue",

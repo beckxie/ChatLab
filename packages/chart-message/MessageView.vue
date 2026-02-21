@@ -78,7 +78,7 @@ const monthNames = computed(() => [
 const typeChartData = computed<EChartPieData>(() => {
   const sorted = [...messageTypes.value].sort((a, b) => b.count - a.count)
   return {
-    labels: sorted.map((item) => getMessageTypeName(item.type)),
+    labels: sorted.map((item) => getMessageTypeName(item.type, t)),
     values: sorted.map((item) => item.count),
   }
 })
@@ -89,7 +89,7 @@ const typeSummary = computed(() => {
   const sorted = [...messageTypes.value].sort((a, b) => b.count - a.count)
 
   return sorted.map((item) => ({
-    name: getMessageTypeName(item.type),
+    name: getMessageTypeName(item.type, t),
     count: item.count,
     percentage: total > 0 ? Math.round((item.count / total) * 100) : 0,
   }))

@@ -3,6 +3,7 @@
  * ECharts 日历热力图组件（GitHub 贡献图风格）
  */
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import * as echarts from 'echarts/core'
 import { HeatmapChart } from 'echarts/charts'
 import { CalendarComponent, TooltipComponent, VisualMapComponent } from 'echarts/components'
@@ -30,6 +31,7 @@ const props = withDefaults(defineProps<Props>(), {
   height: 180,
 })
 
+const { t, locale } = useI18n()
 const isDark = useDark()
 const chartRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
@@ -70,7 +72,7 @@ const option = computed<ECOption>(() => ({
     formatter: (params: any) => {
       const date = params.data[0]
       const value = params.data[1]
-      return `${date}<br/>消息: ${value}`
+      return `${date}<br/>${t('views.message.calendarTooltipMessages')}: ${value}`
     },
   },
   visualMap: {
@@ -111,13 +113,35 @@ const option = computed<ECOption>(() => ({
       show: true,
       color: isDark.value ? '#9ca3af' : '#6b7280',
       fontSize: 10,
+      nameMap: [
+        t('common.month.jan'),
+        t('common.month.feb'),
+        t('common.month.mar'),
+        t('common.month.apr'),
+        t('common.month.may'),
+        t('common.month.jun'),
+        t('common.month.jul'),
+        t('common.month.aug'),
+        t('common.month.sep'),
+        t('common.month.oct'),
+        t('common.month.nov'),
+        t('common.month.dec'),
+      ],
     },
     dayLabel: {
       show: true,
       firstDay: 1, // 从周一开始
       color: isDark.value ? '#6b7280' : '#9ca3af',
       fontSize: 10,
-      nameMap: ['日', '一', '二', '三', '四', '五', '六'],
+      nameMap: [
+        t('common.weekday.sun'),
+        t('common.weekday.mon'),
+        t('common.weekday.tue'),
+        t('common.weekday.wed'),
+        t('common.weekday.thu'),
+        t('common.weekday.fri'),
+        t('common.weekday.sat'),
+      ],
     },
     splitLine: {
       show: false,
@@ -153,8 +177,8 @@ function handleResize() {
   chartInstance?.resize()
 }
 
-// 监听数据和主题变化
-watch([() => props.data, isDark], () => {
+// 监听数据、主题、语言变化
+watch([() => props.data, isDark, locale], () => {
   updateChart()
 })
 

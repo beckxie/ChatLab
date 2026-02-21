@@ -37,6 +37,7 @@
     "heatmapHint": "Shows chat time patterns",
     "calendarHeatmap": "Message Calendar",
     "calendarHint": "Daily message distribution",
+    "calendarTooltipMessages": "Messages",
     "lengthDetailTitle": "Short Messages (1-25 chars)",
     "lengthDetailHint": "Per character",
     "lengthGroupedTitle": "Length Range Distribution",

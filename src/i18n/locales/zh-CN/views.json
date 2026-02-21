@@ -37,6 +37,7 @@
     "heatmapHint": "展示聊天时间规律",
     "calendarHeatmap": "消息日历",
     "calendarHint": "每日消息分布",
+    "calendarTooltipMessages": "消息",
     "lengthDetailTitle": "短消息分布 (1-25字)",
     "lengthDetailHint": "逐字统计",
     "lengthGroupedTitle": "长度区间分布",

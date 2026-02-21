@@ -40,6 +40,28 @@
     "members": "个成员",
     "days": "天"
   },
+  "messageType": {
+    "text": "文字",
+    "image": "图片",
+    "voice": "语音",
+    "video": "视频",
+    "file": "文件",
+    "emoji": "表情",
+    "link": "链接",
+    "location": "位置",
+    "redPacket": "红包",
+    "transfer": "转账",
+    "poke": "拍一拍",
+    "call": "通话",
+    "share": "分享",
+    "reply": "回复",
+    "forward": "转发",
+    "contact": "名片",
+    "system": "系统",
+    "recall": "撤回",
+    "other": "其他",
+    "unknown": "未知"
+  },
   "weekday": {
     "mon": "周一",
     "tue": "周二",

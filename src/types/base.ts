@@ -44,40 +44,43 @@ export enum MessageType {
 }
 
 /**
- * 消息类型名称映射
+ * 消息类型 i18n key 映射
  */
-export const MESSAGE_TYPE_NAMES: Record<number, string> = {
+const MESSAGE_TYPE_KEYS: Record<number, string> = {
   // 基础消息类型
-  [MessageType.TEXT]: '文字',
-  [MessageType.IMAGE]: '图片',
-  [MessageType.VOICE]: '语音',
-  [MessageType.VIDEO]: '视频',
-  [MessageType.FILE]: '文件',
-  [MessageType.EMOJI]: '表情',
-  [MessageType.LINK]: '链接',
-  [MessageType.LOCATION]: '位置',
+  [MessageType.TEXT]: 'text',
+  [MessageType.IMAGE]: 'image',
+  [MessageType.VOICE]: 'voice',
+  [MessageType.VIDEO]: 'video',
+  [MessageType.FILE]: 'file',
+  [MessageType.EMOJI]: 'emoji',
+  [MessageType.LINK]: 'link',
+  [MessageType.LOCATION]: 'location',
   // 交互消息类型
-  [MessageType.RED_PACKET]: '红包',
-  [MessageType.TRANSFER]: '转账',
-  [MessageType.POKE]: '拍一拍',
-  [MessageType.CALL]: '通话',
-  [MessageType.SHARE]: '分享',
-  [MessageType.REPLY]: '回复',
-  [MessageType.FORWARD]: '转发',
-  [MessageType.CONTACT]: '名片',
+  [MessageType.RED_PACKET]: 'redPacket',
+  [MessageType.TRANSFER]: 'transfer',
+  [MessageType.POKE]: 'poke',
+  [MessageType.CALL]: 'call',
+  [MessageType.SHARE]: 'share',
+  [MessageType.REPLY]: 'reply',
+  [MessageType.FORWARD]: 'forward',
+  [MessageType.CONTACT]: 'contact',
   // 系统消息类型
-  [MessageType.SYSTEM]: '系统',
-  [MessageType.RECALL]: '撤回',
+  [MessageType.SYSTEM]: 'system',
+  [MessageType.RECALL]: 'recall',
   // 其他
-  [MessageType.OTHER]: '其他',
+  [MessageType.OTHER]: 'other',
 }
 
 /**
  * 获取消息类型名称
  * @param type 消息类型
+ * @param t 可选的 i18n t 函数，传入时使用 common.messageType.* 键
  */
-export function getMessageTypeName(type: MessageType | number): string {
-  return MESSAGE_TYPE_NAMES[type] || '未知'
+export function getMessageTypeName(type: MessageType | number, t?: (key: string) => string): string {
+  const key = MESSAGE_TYPE_KEYS[type]
+  if (t && key) return t(`common.messageType.${key}`)
+  return t ? t('common.messageType.unknown') : '未知'
 }
 
 /**
