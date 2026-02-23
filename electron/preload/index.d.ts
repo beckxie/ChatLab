@@ -589,15 +589,33 @@ interface TokenUsage {
   totalTokens: number
 }
 
+interface AgentRuntimeStatus {
+  phase: 'preparing' | 'thinking' | 'tool_running' | 'responding' | 'completed' | 'aborted' | 'error'
+  round: number
+  toolsUsed: number
+  currentTool?: string
+  contextTokens: number
+  contextWindow: number
+  contextUsage: number
+  totalUsage: TokenUsage
+  nodeCount?: number
+  tagCount?: number
+  segmentSize?: number
+  checkoutCount?: number
+  activeAnchorNodeId?: string | null
+  updatedAt: number
+}
+
 // Agent 相关类型
 interface AgentStreamChunk {
-  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'done' | 'error'
+  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'status' | 'done' | 'error'
   content?: string
   thinkTag?: string
   thinkDurationMs?: number
   toolName?: string
   toolParams?: Record<string, unknown>
   toolResult?: unknown
+  status?: AgentRuntimeStatus
   error?: string
   isFinished?: boolean
   /** Token 使用量（type=done 时返回累计值） */
@@ -622,6 +640,7 @@ interface OwnerInfo {
 
 interface ToolContext {
   sessionId: string
+  conversationId?: string
   timeFilter?: { startTs: number; endTs: number }
   /** 用户配置：每次发送给 AI 的最大消息条数 */
   maxMessagesLimit?: number
@@ -870,6 +889,7 @@ export {
   LLMChatOptions,
   LLMChatStreamChunk,
   AgentStreamChunk,
+  AgentRuntimeStatus,
   AgentResult,
   ToolContext,
   PromptConfig,

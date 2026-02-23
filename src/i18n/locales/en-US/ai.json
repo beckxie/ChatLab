@@ -86,6 +86,20 @@
         "label": "Limit: ",
         "title": "Max messages per request, click to configure"
       },
+      "agent": {
+        "label": "Agent",
+        "contextUsage": "{used}/{total} ({percent}%)",
+        "stats": "seg {segment} · tags {tags}",
+        "phase": {
+          "preparing": "Preparing",
+          "thinking": "Thinking",
+          "tool_running": "Running tool",
+          "responding": "Responding",
+          "completed": "Completed",
+          "aborted": "Stopped",
+          "error": "Error"
+        }
+      },
       "tokenUsageTitle": "Total token usage in this session",
       "log": {
         "label": "Logs",

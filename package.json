@@ -26,6 +26,7 @@
     "type-check:node": "tsc --noEmit -p tsconfig.node.json",
     "type-check:all": "npm run type-check:web && npm run type-check:node",
     "type-check": "vue-tsc --noEmit -p tsconfig.web.json",
+    "test:agent-context": "node --experimental-strip-types --test electron/main/ai/context/sessionLog.test.mjs",
     "postinstall": "electron-rebuild"
   },
   "dependencies": {
@@ -34,6 +35,8 @@
     "@aptabase/electron": "^0.3.1",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
+    "@mariozechner/pi-agent-core": "0.54.2",
+    "@mariozechner/pi-ai": "0.54.2",
     "@node-rs/jieba": "^2.0.1",
     "@tanstack/vue-virtual": "^3.13.18",
     "@types/markdown-it": "^14.1.2",

@@ -76,6 +76,24 @@ export interface TokenUsage {
   totalTokens: number
 }
 
+// Agent 运行状态（由主进程流式推送）
+export interface AgentRuntimeStatus {
+  phase: 'preparing' | 'thinking' | 'tool_running' | 'responding' | 'completed' | 'aborted' | 'error'
+  round: number
+  toolsUsed: number
+  currentTool?: string
+  contextTokens: number
+  contextWindow: number
+  contextUsage: number
+  totalUsage: TokenUsage
+  nodeCount?: number
+  tagCount?: number
+  segmentSize?: number
+  checkoutCount?: number
+  activeAnchorNodeId?: string | null
+  updatedAt: number
+}
+
 // 工具显示名称通过 vue-i18n 管理: ai.chat.message.tools.*
 // 渲染层 (ChatMessage.vue, AIThinkingIndicator.vue) 使用 t() 动态获取
 
@@ -121,6 +139,8 @@ export function useAIChat(
 
   // Token 使用量（当前会话累计）
   const sessionTokenUsage = ref<TokenUsage>({ promptTokens: 0, completionTokens: 0, totalTokens: 0 })
+  // Agent 运行状态（用于状态栏）
+  const agentStatus = ref<AgentRuntimeStatus | null>(null)
 
   // 初始化：获取 Owner 信息
   async function initOwnerInfo() {
@@ -160,6 +180,29 @@ export function useAIChat(
   // 生成消息 ID
   function generateId(prefix: string): string {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  function buildFallbackAgentStatus(): AgentRuntimeStatus {
+    return {
+      phase: 'preparing',
+      round: 0,
+      toolsUsed: toolsUsedInCurrentRound.value.length,
+      contextTokens: 0,
+      contextWindow: 0,
+      contextUsage: 0,
+      totalUsage: { ...sessionTokenUsage.value },
+      updatedAt: Date.now(),
+    }
+  }
+
+  function setAgentPhase(phase: AgentRuntimeStatus['phase'], extra?: Partial<AgentRuntimeStatus>): void {
+    const base = agentStatus.value ? { ...agentStatus.value } : buildFallbackAgentStatus()
+    agentStatus.value = {
+      ...base,
+      ...extra,
+      phase,
+      updatedAt: Date.now(),
+    }
   }
 
   /**
@@ -206,6 +249,7 @@ export function useAIChat(
     isLoadingSource.value = true
     currentToolStatus.value = null
     toolsUsedInCurrentRound.value = []
+    agentStatus.value = null
     isAborted = false
     // 生成新的请求 ID
     currentRequestId = generateId('req')
@@ -333,6 +377,7 @@ export function useAIChat(
       // 注意：ownerInfo 需要深拷贝为普通对象，否则 IPC 克隆会失败
       const context = {
         sessionId,
+        conversationId: currentConversationId.value || undefined,
         timeFilter: timeFilter ? { startTs: timeFilter.startTs, endTs: timeFilter.endTs } : undefined,
         maxMessagesLimit: aiGlobalSettings.value.maxMessagesPerRequest,
         ownerInfo: ownerInfo.value
@@ -440,6 +485,12 @@ export function useAIChat(
               isLoadingSource.value = false
               break
 
+            case 'status':
+              if (chunk.status) {
+                agentStatus.value = chunk.status
+              }
+              break
+
             case 'done':
               // 完成 - 更新 Token 使用量
               console.log('[AI] Agent 完成', chunk.usage)
@@ -453,6 +504,7 @@ export function useAIChat(
                 }
                 console.log('[AI] Token 使用量更新:', sessionTokenUsage.value)
               }
+              setAgentPhase('completed', chunk.usage ? { totalUsage: chunk.usage } : undefined)
               break
 
             case 'error':
@@ -473,6 +525,7 @@ export function useAIChat(
                 appendTextToBlocks(`\n\n❌ 处理失败：${errorMessage}`)
                 updateAIMessage({ isStreaming: false })
               }
+              setAgentPhase('error')
               break
           }
         },
@@ -532,6 +585,7 @@ export function useAIChat(
     } catch (error) {
       console.error('[AI] ====== 处理失败 ======')
       console.error('[AI] 错误:', error)
+      setAgentPhase('error')
 
       messages.value[aiMessageIndex] = {
         ...messages.value[aiMessageIndex],
@@ -635,6 +689,7 @@ export function useAIChat(
     currentKeywords.value = []
     // 重置 Token 计数
     sessionTokenUsage.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+    agentStatus.value = null
 
     if (welcomeMessage) {
       messages.value.push({
@@ -671,6 +726,9 @@ export function useAIChat(
     isAIThinking.value = false
     isLoadingSource.value = false
     currentToolStatus.value = null
+    if (agentStatus.value) {
+      setAgentPhase('aborted')
+    }
 
     // 调用主进程中止 Agent 请求
     if (currentAgentRequestId) {
@@ -703,6 +761,7 @@ export function useAIChat(
     currentToolStatus,
     toolsUsedInCurrentRound,
     sessionTokenUsage,
+    agentStatus,
 
     // 方法
     sendMessage,

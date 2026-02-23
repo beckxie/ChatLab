@@ -20,6 +20,8 @@ export interface OwnerInfo {
 export interface ToolContext {
   /** 当前会话 ID（数据库文件名） */
   sessionId: string
+  /** 当前 AI 对话 ID（用于上下文管理隔离） */
+  conversationId?: string
   /** 时间过滤器 */
   timeFilter?: {
     startTs: number

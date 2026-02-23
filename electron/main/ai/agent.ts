@@ -3,13 +3,33 @@
  * 处理 Function Calling 循环，支持多轮工具调用
  */
 
-import type { ChatMessage, ChatOptions, ChatStreamChunk, ToolCall } from './llm/types'
-import { chatStream, chat } from './llm'
+import type { ChatMessage, ChatOptions, ToolCall } from './llm/types'
+import { chatStream } from './llm'
 import { getAllToolDefinitions, executeToolCalls } from './tools'
 import type { ToolContext, OwnerInfo } from './tools/types'
 import { aiLogger } from './logger'
 import { randomUUID } from 'crypto'
 import { t as i18nT } from '../i18n'
+import {
+  Agent as PiAgentCore,
+  type AgentEvent as PiAgentEvent,
+  type AgentTool as PiAgentTool,
+} from '@mariozechner/pi-agent-core'
+import {
+  EventStream as PiEventStream,
+  Type as PiType,
+  type AssistantMessage as PiAssistantMessage,
+  type AssistantMessageEvent as PiAssistantMessageEvent,
+  type AssistantMessageEventStream as PiAssistantMessageEventStream,
+  type Context as PiContext,
+  type Message as PiMessage,
+  type Model as PiModel,
+  type StopReason as PiStopReason,
+  type Tool as PiToolSchema,
+  type ToolCall as PiToolCall,
+  type Usage as PiUsage,
+} from '@mariozechner/pi-ai'
+import { getAgentSessionLog, type AgentSessionLog } from './context/sessionLog'
 
 // 思考类标签列表（可按需扩展）
 const THINK_TAGS = ['think', 'analysis', 'reasoning', 'reflection', 'thought', 'thinking']
@@ -245,6 +265,8 @@ function createStreamParser(handlers: {
 export interface AgentConfig {
   /** 最大工具调用轮数（防止无限循环） */
   maxToolRounds?: number
+  /** 注入模型的历史消息上限（user+assistant） */
+  contextHistoryLimit?: number
   /** LLM 选项 */
   llmOptions?: ChatOptions
   /** 中止信号，用于取消执行 */
@@ -261,11 +283,45 @@ export interface TokenUsage {
 }
 
 /**
+ * Agent 运行状态（用于前端状态栏展示）
+ */
+export interface AgentRuntimeStatus {
+  /** 当前阶段 */
+  phase: 'preparing' | 'thinking' | 'tool_running' | 'responding' | 'completed' | 'aborted' | 'error'
+  /** 当前工具调用轮次 */
+  round: number
+  /** 累计调用工具次数 */
+  toolsUsed: number
+  /** 当前执行中的工具 */
+  currentTool?: string
+  /** 当前上下文 Token 估算值 */
+  contextTokens: number
+  /** 模型上下文窗口 */
+  contextWindow: number
+  /** 上下文占用比例（0-1） */
+  contextUsage: number
+  /** 当前运行累计 Token 使用量 */
+  totalUsage: TokenUsage
+  /** SessionLog 中的节点总数 */
+  nodeCount: number
+  /** SessionLog 中的标签数量 */
+  tagCount: number
+  /** 距离最近标签的步数 */
+  segmentSize: number
+  /** checkout 记录数量 */
+  checkoutCount: number
+  /** 当前锚点节点 ID */
+  activeAnchorNodeId?: string | null
+  /** 状态更新时间（毫秒时间戳） */
+  updatedAt: number
+}
+
+/**
  * Agent 流式响应 chunk
  */
 export interface AgentStreamChunk {
   /** chunk 类型 */
-  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'done' | 'error'
+  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'status' | 'done' | 'error'
   /** 文本内容（type=content 时） */
   content?: string
   /** 思考标签名称（type=think 时） */
@@ -284,6 +340,8 @@ export interface AgentStreamChunk {
   isFinished?: boolean
   /** Token 使用量（type=done 时返回累计值） */
   usage?: TokenUsage
+  /** 运行状态（type=status 时返回） */
+  status?: AgentRuntimeStatus
 }
 
 /**
@@ -362,6 +420,17 @@ function getLockedPromptSection(
 
   const year = now.getFullYear()
   const prevYear = year - 1
+  const contextToolGuidance = locale.startsWith('zh')
+    ? `\n上下文管理约定：
+- 关键节点请调用 context_tag 打标签
+- 需要检查上下文状态时调用 context_log
+- 任务分叉或上下文噪音变大时调用 context_checkout
+- context_checkout 从下一轮开始生效，需给出简短分支摘要`
+    : `\nContext management protocol:
+- Use context_tag to mark milestones
+- Use context_log to inspect the context timeline
+- Use context_checkout when branching or when context gets noisy
+- context_checkout takes effect from the next turn, include a concise branch summary`
 
   return `${agentT('ai.agent.currentDateIs', locale)} ${currentDate}。
 ${ownerNote}
@@ -371,6 +440,7 @@ ${agentT('ai.agent.timeParamsIntro', locale)}
 - ${agentT('ai.agent.timeParamExample2', locale, { year })}
 - ${agentT('ai.agent.timeParamExample3', locale, { year })}
 ${agentT('ai.agent.defaultYearNote', locale, { year, prevYear })}
+${contextToolGuidance}
 
 ${agentT('ai.agent.responseInstruction', locale)}`
 }
@@ -431,7 +501,6 @@ ${responseRules}`
 export class Agent {
   private context: ToolContext
   private config: AgentConfig
-  private messages: ChatMessage[] = []
   private toolsUsed: string[] = []
   private toolRounds: number = 0
   private abortSignal?: AbortSignal
@@ -441,6 +510,14 @@ export class Agent {
   private locale: string = 'zh-CN'
   /** 累计 Token 使用量 */
   private totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  /** Agentic Context Session Log */
+  private sessionLog: AgentSessionLog
+  /** 最近一次发送给前端的状态 */
+  private latestRuntimeStatus: AgentRuntimeStatus | null = null
+  /** 模型上下文窗口 */
+  private readonly contextWindow = 128000
+  /** 状态事件节流时间戳 */
+  private lastStatusAt = 0
 
   constructor(
     context: ToolContext,
@@ -458,8 +535,10 @@ export class Agent {
     this.locale = locale
     this.config = {
       maxToolRounds: config.maxToolRounds ?? 5,
+      contextHistoryLimit: config.contextHistoryLimit ?? 48,
       llmOptions: config.llmOptions ?? { temperature: 0.7, maxTokens: 2048 },
     }
+    this.sessionLog = getAgentSessionLog(this.context.sessionId, this.context.conversationId)
   }
 
   /**
@@ -469,15 +548,708 @@ export class Agent {
     return this.abortSignal?.aborted ?? false
   }
 
-  /**
-   * 累加 Token 使用量
-   */
-  private addUsage(usage?: { promptTokens: number; completionTokens: number; totalTokens: number }): void {
-    if (usage) {
-      this.totalUsage.promptTokens += usage.promptTokens
-      this.totalUsage.completionTokens += usage.completionTokens
-      this.totalUsage.totalTokens += usage.totalTokens
+  private addPiUsage(usage?: PiUsage): void {
+    if (!usage) return
+    this.totalUsage.promptTokens += usage.input || 0
+    this.totalUsage.completionTokens += usage.output || 0
+    this.totalUsage.totalTokens += usage.totalTokens || usage.input + usage.output || 0
+  }
+
+  private resetRunState(): void {
+    this.toolsUsed = []
+    this.toolRounds = 0
+    this.totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+    this.lastStatusAt = 0
+    this.latestRuntimeStatus = null
+  }
+
+  private cloneUsage(): TokenUsage {
+    return {
+      promptTokens: this.totalUsage.promptTokens,
+      completionTokens: this.totalUsage.completionTokens,
+      totalTokens: this.totalUsage.totalTokens,
     }
+  }
+
+  private estimateTokensFromText(text: string): number {
+    if (!text) return 0
+
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (!normalized) return 0
+
+    const cjkCount = (normalized.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length
+    const latinCount = normalized.length - cjkCount
+    return Math.max(1, Math.ceil(cjkCount * 1.15 + latinCount / 4))
+  }
+
+  private extractMessageText(message: PiMessage): string {
+    if (message.role === 'user') {
+      if (typeof message.content === 'string') return message.content
+      return message.content
+        .map((item) => {
+          if (item.type === 'text') return item.text
+          if (item.type === 'image') return '[image]'
+          return ''
+        })
+        .join('\n')
+    }
+
+    if (message.role === 'assistant') {
+      return message.content
+        .map((item) => {
+          if (item.type === 'text') return item.text
+          if (item.type === 'thinking') return item.thinking
+          if (item.type === 'toolCall') return `${item.name} ${JSON.stringify(item.arguments || {})}`
+          return ''
+        })
+        .join('\n')
+    }
+
+    if (message.role === 'toolResult') {
+      return message.content
+        .map((item) => {
+          if (item.type === 'text') return item.text
+          return '[binary]'
+        })
+        .join('\n')
+    }
+
+    return ''
+  }
+
+  private estimateContextTokens(systemPrompt: string, messages: PiMessage[], pendingUserMessage?: string): number {
+    let tokens = this.estimateTokensFromText(systemPrompt)
+
+    for (const message of messages) {
+      tokens += this.estimateTokensFromText(this.extractMessageText(message))
+    }
+
+    if (pendingUserMessage) {
+      tokens += this.estimateTokensFromText(pendingUserMessage)
+    }
+
+    return tokens
+  }
+
+  private buildSystemPromptWithContextNotes(baseSystemPrompt: string): string {
+    const notes = this.sessionLog.consumePendingSystemNotes()
+    if (notes.length === 0) return baseSystemPrompt
+
+    return `${baseSystemPrompt}
+
+[Context Checkout Notes]
+${notes.map((note, index) => `${index + 1}. ${note}`).join('\n')}`
+  }
+
+  private toCompactText(value: unknown, maxLen: number = 260): string {
+    let text = ''
+    if (typeof value === 'string') {
+      text = value
+    } else {
+      try {
+        text = JSON.stringify(value)
+      } catch {
+        text = String(value)
+      }
+    }
+
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (normalized.length <= maxLen) return normalized
+    return `${normalized.slice(0, maxLen)}...`
+  }
+
+  private emitStatus(
+    onChunk: (chunk: AgentStreamChunk) => void,
+    phase: AgentRuntimeStatus['phase'],
+    systemPrompt: string,
+    messages: PiMessage[],
+    options?: {
+      pendingUserMessage?: string
+      currentTool?: string
+      force?: boolean
+    }
+  ): void {
+    const now = Date.now()
+    if (!options?.force && now - this.lastStatusAt < 240) {
+      return
+    }
+    this.lastStatusAt = now
+
+    const contextTokens = this.estimateContextTokens(systemPrompt, messages, options?.pendingUserMessage)
+    const contextUsage = this.contextWindow > 0 ? Math.min(1, Math.max(0, contextTokens / this.contextWindow)) : 0
+    const snapshot = this.sessionLog.getSnapshot(6)
+
+    const status: AgentRuntimeStatus = {
+      phase,
+      round: this.toolRounds,
+      toolsUsed: this.toolsUsed.length,
+      currentTool: options?.currentTool,
+      contextTokens,
+      contextWindow: this.contextWindow,
+      contextUsage,
+      totalUsage: this.cloneUsage(),
+      nodeCount: snapshot.nodeCount,
+      tagCount: snapshot.tagCount,
+      segmentSize: snapshot.segmentSize,
+      checkoutCount: snapshot.checkoutCount,
+      activeAnchorNodeId: snapshot.activeAnchorNodeId,
+      updatedAt: now,
+    }
+    this.latestRuntimeStatus = status
+
+    onChunk({
+      type: 'status',
+      status,
+    })
+  }
+
+  private createEmptyPiUsage(): PiUsage {
+    return {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    }
+  }
+
+  private toPiUsage(usage?: { promptTokens: number; completionTokens: number; totalTokens: number }): PiUsage {
+    if (!usage) return this.createEmptyPiUsage()
+    return {
+      input: usage.promptTokens,
+      output: usage.completionTokens,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: usage.totalTokens,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    }
+  }
+
+  private normalizeToolParams(toolName: string, params: Record<string, unknown>): Record<string, unknown> {
+    const normalized = { ...params }
+
+    const toolsWithLimit = ['search_messages', 'get_recent_messages', 'get_conversation_between']
+    if (this.context.maxMessagesLimit && toolsWithLimit.includes(toolName)) {
+      normalized.limit = this.context.maxMessagesLimit
+    }
+
+    if (this.context.timeFilter && (toolName === 'search_messages' || toolName === 'get_recent_messages')) {
+      normalized._timeFilter = this.context.timeFilter
+    }
+
+    return normalized
+  }
+
+  private toPiHistoryMessages(messages: ChatMessage[]): PiMessage[] {
+    return messages
+      .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
+      .map((msg): PiMessage => {
+        if (msg.role === 'user') {
+          return {
+            role: 'user',
+            content: [{ type: 'text', text: msg.content || '' }],
+            timestamp: Date.now(),
+          }
+        }
+
+        return {
+          role: 'assistant',
+          content: [{ type: 'text', text: msg.content || '' }],
+          api: 'openai-completions',
+          provider: 'chatlab',
+          model: 'chatlab-bridge',
+          usage: this.createEmptyPiUsage(),
+          stopReason: 'stop',
+          timestamp: Date.now(),
+        }
+      })
+  }
+
+  private piMessageToChatMessage(message: PiMessage): ChatMessage | null {
+    if (message.role === 'user') {
+      const content =
+        typeof message.content === 'string'
+          ? message.content
+          : message.content
+              .filter((item) => item.type === 'text')
+              .map((item) => item.text)
+              .join('\n')
+
+      return { role: 'user', content }
+    }
+
+    if (message.role === 'assistant') {
+      const textContent = message.content
+        .filter((item) => item.type === 'text')
+        .map((item) => item.text)
+        .join('')
+
+      const toolCalls = message.content
+        .filter((item): item is PiToolCall => item.type === 'toolCall')
+        .map(
+          (item): ToolCall => ({
+            id: item.id,
+            type: 'function',
+            function: {
+              name: item.name,
+              arguments: JSON.stringify(item.arguments ?? {}),
+            },
+            thoughtSignature: item.thoughtSignature,
+          })
+        )
+
+      return {
+        role: 'assistant',
+        content: textContent,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      }
+    }
+
+    if (message.role === 'toolResult') {
+      const content = message.content
+        .map((item) => {
+          if (item.type === 'text') return item.text
+          return '[image]'
+        })
+        .join('\n')
+
+      return {
+        role: 'tool',
+        content,
+        tool_call_id: message.toolCallId,
+      }
+    }
+
+    return null
+  }
+
+  private toChatMessages(context: PiContext): ChatMessage[] {
+    const result: ChatMessage[] = []
+
+    if (context.systemPrompt?.trim()) {
+      result.push({ role: 'system', content: context.systemPrompt })
+    }
+
+    for (const message of context.messages) {
+      const mapped = this.piMessageToChatMessage(message)
+      if (mapped) result.push(mapped)
+    }
+
+    return result
+  }
+
+  private toChatToolDefinitions(tools?: PiToolSchema[]): Array<{
+    type: 'function'
+    function: {
+      name: string
+      description: string
+      parameters: {
+        type: 'object'
+        properties: Record<
+          string,
+          {
+            type: string
+            description: string
+            enum?: string[]
+            items?: { type: string }
+          }
+        >
+        required?: string[]
+      }
+    }
+  }> {
+    if (!tools || tools.length === 0) return []
+
+    return tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters as unknown as {
+          type: 'object'
+          properties: Record<
+            string,
+            {
+              type: string
+              description: string
+              enum?: string[]
+              items?: { type: string }
+            }
+          >
+          required?: string[]
+        },
+      },
+    }))
+  }
+
+  private createBridgeModel(): PiModel<any> {
+    return {
+      id: 'chatlab-bridge',
+      name: 'ChatLab Bridge',
+      api: 'openai-completions',
+      provider: 'chatlab',
+      baseUrl: 'https://chatlab.local',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: this.contextWindow,
+      maxTokens: this.config.llmOptions?.maxTokens ?? 4096,
+    }
+  }
+
+  private createPiStreamFn() {
+    return (_model: PiModel<any>, context: PiContext, options?: { signal?: AbortSignal; maxTokens?: number }) => {
+      const stream = new PiEventStream<PiAssistantMessageEvent, PiAssistantMessage>(
+        (event) => event.type === 'done' || event.type === 'error',
+        (event) => {
+          if (event.type === 'done') return event.message
+          if (event.type === 'error') return event.error
+          return event.partial
+        }
+      ) as unknown as PiAssistantMessageEventStream
+
+      ;(async () => {
+        const partial: PiAssistantMessage = {
+          role: 'assistant',
+          content: [],
+          api: 'openai-completions',
+          provider: 'chatlab',
+          model: 'chatlab-bridge',
+          usage: this.createEmptyPiUsage(),
+          stopReason: 'stop',
+          timestamp: Date.now(),
+        }
+
+        const clonePartial = (): PiAssistantMessage => structuredClone(partial)
+        stream.push({ type: 'start', partial: clonePartial() })
+
+        let accumulatedContent = ''
+        let finishReason: 'stop' | 'length' | 'error' | 'tool_calls' = 'stop'
+        let hasToolCalls = false
+        let activeTextIndex: number | null = null
+        let activeThinkingIndex: number | null = null
+
+        const appendText = (text: string) => {
+          if (!text) return
+
+          if (activeTextIndex === null) {
+            activeTextIndex = partial.content.push({ type: 'text', text: '' }) - 1
+            stream.push({ type: 'text_start', contentIndex: activeTextIndex, partial: clonePartial() })
+          }
+
+          const target = partial.content[activeTextIndex]
+          if (target.type !== 'text') return
+          target.text += text
+          stream.push({
+            type: 'text_delta',
+            contentIndex: activeTextIndex,
+            delta: text,
+            partial: clonePartial(),
+          })
+        }
+
+        const appendThinking = (text: string) => {
+          if (activeThinkingIndex === null) {
+            activeThinkingIndex = partial.content.push({ type: 'thinking', thinking: '' }) - 1
+            stream.push({ type: 'thinking_start', contentIndex: activeThinkingIndex, partial: clonePartial() })
+          }
+
+          const target = partial.content[activeThinkingIndex]
+          if (target.type !== 'thinking') return
+          target.thinking += text
+          stream.push({
+            type: 'thinking_delta',
+            contentIndex: activeThinkingIndex,
+            delta: text,
+            partial: clonePartial(),
+          })
+        }
+
+        const closeThinking = () => {
+          if (activeThinkingIndex === null) return
+          const target = partial.content[activeThinkingIndex]
+          if (target.type === 'thinking') {
+            stream.push({
+              type: 'thinking_end',
+              contentIndex: activeThinkingIndex,
+              content: target.thinking,
+              partial: clonePartial(),
+            })
+          }
+          activeThinkingIndex = null
+        }
+
+        const parser = createStreamParser({
+          onText: (text) => appendText(text),
+          onThink: (text) => appendThinking(text),
+          onThinkEnd: () => closeThinking(),
+        })
+
+        const appendToolCalls = (toolCalls: ToolCall[]) => {
+          for (const toolCall of toolCalls) {
+            let parsedArgs: Record<string, unknown> = {}
+            try {
+              parsedArgs = JSON.parse(toolCall.function.arguments || '{}') as Record<string, unknown>
+            } catch {
+              parsedArgs = {}
+            }
+
+            const piToolCall: PiToolCall = {
+              type: 'toolCall',
+              id: toolCall.id,
+              name: toolCall.function.name,
+              arguments: parsedArgs,
+              thoughtSignature: toolCall.thoughtSignature,
+            }
+
+            const index = partial.content.push(piToolCall) - 1
+            hasToolCalls = true
+            stream.push({ type: 'toolcall_start', contentIndex: index, partial: clonePartial() })
+            stream.push({
+              type: 'toolcall_delta',
+              contentIndex: index,
+              delta: JSON.stringify(piToolCall.arguments || {}),
+              partial: clonePartial(),
+            })
+            stream.push({
+              type: 'toolcall_end',
+              contentIndex: index,
+              toolCall: piToolCall,
+              partial: clonePartial(),
+            })
+          }
+        }
+
+        try {
+          const llmMessages = this.toChatMessages(context)
+          const llmTools = this.toChatToolDefinitions(context.tools)
+
+          for await (const chunk of chatStream(llmMessages, {
+            ...this.config.llmOptions,
+            maxTokens: options?.maxTokens ?? this.config.llmOptions?.maxTokens,
+            tools: llmTools,
+            abortSignal: options?.signal,
+          })) {
+            if (chunk.content) {
+              accumulatedContent += chunk.content
+              parser.push(chunk.content)
+            }
+
+            if (chunk.tool_calls && chunk.tool_calls.length > 0) {
+              appendToolCalls(chunk.tool_calls)
+            }
+
+            if (chunk.usage) {
+              partial.usage = this.toPiUsage(chunk.usage)
+            }
+
+            if (chunk.isFinished) {
+              finishReason = chunk.finishReason || 'stop'
+            }
+          }
+
+          parser.flush()
+          closeThinking()
+
+          if (!hasToolCalls && hasToolCallTags(accumulatedContent)) {
+            const fallbackToolCalls = parseToolCallTags(accumulatedContent)
+            if (fallbackToolCalls && fallbackToolCalls.length > 0) {
+              appendToolCalls(fallbackToolCalls)
+              hasToolCalls = true
+            }
+          }
+
+          if (activeTextIndex !== null) {
+            const target = partial.content[activeTextIndex]
+            if (target.type === 'text') {
+              stream.push({
+                type: 'text_end',
+                contentIndex: activeTextIndex,
+                content: target.text,
+                partial: clonePartial(),
+              })
+            }
+            activeTextIndex = null
+          }
+
+          const doneReason: Extract<PiStopReason, 'stop' | 'length' | 'toolUse'> = hasToolCalls
+            ? 'toolUse'
+            : finishReason === 'length'
+              ? 'length'
+              : 'stop'
+
+          partial.stopReason = doneReason
+          const message = clonePartial()
+          stream.push({ type: 'done', reason: doneReason, message })
+          stream.end(message)
+        } catch (error) {
+          const isAbort = options?.signal?.aborted === true
+          const reason: Extract<PiStopReason, 'error' | 'aborted'> = isAbort ? 'aborted' : 'error'
+          const errorMessage: PiAssistantMessage = {
+            ...partial,
+            stopReason: reason,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            timestamp: Date.now(),
+          }
+          stream.push({ type: 'error', reason, error: errorMessage })
+          stream.end(errorMessage)
+        }
+      })()
+
+      return stream
+    }
+  }
+
+  private async createPiTools(): Promise<PiAgentTool[]> {
+    const toolDefinitions = await getAllToolDefinitions()
+    const businessTools = toolDefinitions.map(
+      (definition) =>
+        ({
+          name: definition.function.name,
+          label: definition.function.name,
+          description: definition.function.description,
+          parameters: (definition.function.parameters || PiType.Any()) as any,
+          execute: async (toolCallId: string, params: any) => {
+            const toolCall: ToolCall = {
+              id: toolCallId,
+              type: 'function',
+              function: {
+                name: definition.function.name,
+                arguments: JSON.stringify(params ?? {}),
+              },
+            }
+
+            const [result] = await executeToolCalls([toolCall], { ...this.context, locale: this.locale })
+            const contentText = result.success
+              ? JSON.stringify(result.result)
+              : agentT('ai.agent.toolError', this.locale, { error: result.error })
+
+            return {
+              content: [{ type: 'text', text: contentText }],
+              details: result.success ? result.result : result.error,
+            }
+          },
+        }) as PiAgentTool<any>
+    )
+
+    const contextTools: PiAgentTool[] = [
+      {
+        name: 'context_log',
+        label: 'context_log',
+        description: this.locale.startsWith('zh')
+          ? '查看当前上下文管理状态，返回节点、标签、checkout 和上下文占用。'
+          : 'Inspect context manager state and return nodes, tags, checkouts, and context usage.',
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: this.locale.startsWith('zh')
+                ? '返回最近节点数量，默认 12，最大 40。'
+                : 'Recent node count, default 12, max 40.',
+            },
+          },
+          required: [],
+        } as any,
+        execute: async (_toolCallId: string, params: any) => {
+          const limit = typeof params?.limit === 'number' ? Math.max(4, Math.min(40, Math.floor(params.limit))) : 12
+
+          const usage = this.latestRuntimeStatus
+            ? {
+                contextTokens: this.latestRuntimeStatus.contextTokens,
+                contextWindow: this.latestRuntimeStatus.contextWindow,
+                contextUsage: this.latestRuntimeStatus.contextUsage,
+                totalUsage: this.latestRuntimeStatus.totalUsage,
+              }
+            : undefined
+
+          const payload = this.sessionLog.buildContextLogPayload(usage, limit)
+          return {
+            content: [{ type: 'text', text: JSON.stringify(payload) }],
+            details: payload,
+          }
+        },
+      } as PiAgentTool<any>,
+      {
+        name: 'context_tag',
+        label: 'context_tag',
+        description: this.locale.startsWith('zh')
+          ? '为关键节点打标签，便于后续 context_checkout 回溯。'
+          : 'Tag important context nodes for later context_checkout.',
+        parameters: {
+          type: 'object',
+          properties: {
+            tag: {
+              type: 'string',
+              description: this.locale.startsWith('zh') ? '标签名，例如 phase1_done。' : 'Tag name, e.g. phase1_done.',
+            },
+            target: {
+              type: 'string',
+              description: this.locale.startsWith('zh')
+                ? '可选，节点 ID 或已有标签。默认当前 head。'
+                : 'Optional node id or existing tag. Defaults to current head.',
+            },
+            note: {
+              type: 'string',
+              description: this.locale.startsWith('zh') ? '可选，记录标签备注。' : 'Optional note for the tag.',
+            },
+          },
+          required: ['tag'],
+        } as any,
+        execute: async (_toolCallId: string, params: any) => {
+          const result = this.sessionLog.tag(String(params?.tag || ''), params?.target, params?.note)
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            details: result,
+          }
+        },
+      } as PiAgentTool<any>,
+      {
+        name: 'context_checkout',
+        label: 'context_checkout',
+        description: this.locale.startsWith('zh')
+          ? '切换上下文锚点并记录分支摘要，下一轮对话将基于该锚点组织历史。'
+          : 'Switch context anchor and store a branch summary. Applied on next turn.',
+        parameters: {
+          type: 'object',
+          properties: {
+            target: {
+              type: 'string',
+              description: this.locale.startsWith('zh') ? '目标节点 ID 或标签名。' : 'Target node id or tag name.',
+            },
+            summary: {
+              type: 'string',
+              description: this.locale.startsWith('zh')
+                ? '对当前分支的短摘要，供下一轮系统提示引用。'
+                : 'Concise summary of the current branch for next-turn system notes.',
+            },
+          },
+          required: ['target', 'summary'],
+        } as any,
+        execute: async (_toolCallId: string, params: any) => {
+          const result = this.sessionLog.checkout(String(params?.target || ''), String(params?.summary || ''))
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            details: result,
+          }
+        },
+      } as PiAgentTool<any>,
+    ]
+
+    return [...businessTools, ...contextTools]
   }
 
   /**
@@ -485,102 +1257,7 @@ export class Agent {
    * @param userMessage 用户消息
    */
   async execute(userMessage: string): Promise<AgentResult> {
-    aiLogger.info('Agent', 'User question', userMessage)
-
-    // 检查是否已中止
-    if (this.isAborted()) {
-      return { content: '', toolsUsed: [], toolRounds: 0, totalUsage: this.totalUsage }
-    }
-
-    // 初始化消息（包含历史记录）
-    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig, this.context.ownerInfo, this.locale)
-    this.messages = [
-      { role: 'system', content: systemPrompt },
-      ...this.historyMessages, // 插入历史对话
-      { role: 'user', content: userMessage },
-    ]
-    this.toolsUsed = []
-    this.toolRounds = 0
-
-    // 获取所有工具定义
-    const tools = await getAllToolDefinitions()
-
-    // 执行循环
-    while (this.toolRounds < this.config.maxToolRounds!) {
-      // 每轮开始时检查是否中止
-      if (this.isAborted()) {
-        return {
-          content: '',
-          toolsUsed: this.toolsUsed,
-          toolRounds: this.toolRounds,
-          totalUsage: this.totalUsage,
-        }
-      }
-
-      const response = await chat(this.messages, {
-        ...this.config.llmOptions,
-        tools,
-        abortSignal: this.abortSignal,
-      })
-
-      // 累加 Token 使用量
-      this.addUsage(response.usage)
-
-      const { cleanContent } = extractThinkingContent(response.content)
-      let toolCallsToProcess = response.tool_calls
-
-      // 如果没有标准 tool_calls，尝试 fallback 解析
-      if (response.finishReason !== 'tool_calls' || !response.tool_calls) {
-        // Fallback: 检查内容中是否有 <tool_call> 标签
-        if (hasToolCallTags(response.content)) {
-          // 解析 tool_call 标签
-          const fallbackToolCalls = parseToolCallTags(response.content)
-          if (fallbackToolCalls && fallbackToolCalls.length > 0) {
-            toolCallsToProcess = fallbackToolCalls
-          } else {
-            // 解析失败，返回清理后的内容
-            const sanitizedContent = stripToolCallTags(cleanContent)
-            aiLogger.info('Agent', 'AI response', sanitizedContent)
-            return {
-              content: sanitizedContent,
-              toolsUsed: this.toolsUsed,
-              toolRounds: this.toolRounds,
-              totalUsage: this.totalUsage,
-            }
-          }
-        } else {
-          // 没有 tool_call 标签，正常完成
-          aiLogger.info('Agent', 'AI response', cleanContent)
-          return {
-            content: cleanContent,
-            toolsUsed: this.toolsUsed,
-            toolRounds: this.toolRounds,
-            totalUsage: this.totalUsage,
-          }
-        }
-      }
-
-      // 处理工具调用
-      await this.handleToolCalls(toolCallsToProcess!)
-      this.toolRounds++
-    }
-
-    // 超过最大轮数，强制让 LLM 总结
-    aiLogger.warn('Agent', 'Max tool call rounds reached', { maxRounds: this.config.maxToolRounds })
-    this.messages.push({
-      role: 'user',
-      content: agentT('ai.agent.answerWithoutTools', this.locale),
-    })
-
-    const finalResponse = await chat(this.messages, this.config.llmOptions)
-    this.addUsage(finalResponse.usage)
-    const finalCleanContent = stripToolCallTags(extractThinkingContent(finalResponse.content).cleanContent)
-    return {
-      content: finalCleanContent,
-      toolsUsed: this.toolsUsed,
-      toolRounds: this.toolRounds,
-      totalUsage: this.totalUsage,
-    }
+    return this.executeStream(userMessage, () => {})
   }
 
   /**
@@ -590,349 +1267,169 @@ export class Agent {
    */
   async executeStream(userMessage: string, onChunk: (chunk: AgentStreamChunk) => void): Promise<AgentResult> {
     aiLogger.info('Agent', 'User question', userMessage)
+    this.resetRunState()
 
-    // 检查是否已中止
     if (this.isAborted()) {
+      const snapshot = this.sessionLog.getSnapshot(6)
+      onChunk({
+        type: 'status',
+        status: {
+          phase: 'aborted',
+          round: 0,
+          toolsUsed: 0,
+          contextTokens: 0,
+          contextWindow: this.contextWindow,
+          contextUsage: 0,
+          totalUsage: this.cloneUsage(),
+          nodeCount: snapshot.nodeCount,
+          tagCount: snapshot.tagCount,
+          segmentSize: snapshot.segmentSize,
+          checkoutCount: snapshot.checkoutCount,
+          activeAnchorNodeId: snapshot.activeAnchorNodeId,
+          updatedAt: Date.now(),
+        },
+      })
       onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
       return { content: '', toolsUsed: [], toolRounds: 0, totalUsage: this.totalUsage }
     }
 
-    // 初始化消息（包含历史记录）
-    const systemPrompt = buildSystemPrompt(this.chatType, this.promptConfig, this.context.ownerInfo, this.locale)
-    this.messages = [
-      { role: 'system', content: systemPrompt },
-      ...this.historyMessages, // 插入历史对话
-      { role: 'user', content: userMessage },
-    ]
-    this.toolsUsed = []
-    this.toolRounds = 0
+    const coreAgent = new PiAgentCore({
+      initialState: {
+        model: this.createBridgeModel(),
+        thinkingLevel: 'off',
+      },
+      streamFn: this.createPiStreamFn(),
+      convertToLlm: (messages) =>
+        messages.filter(
+          (msg): msg is PiMessage => msg.role === 'user' || msg.role === 'assistant' || msg.role === 'toolResult'
+        ),
+    })
 
-    const tools = await getAllToolDefinitions()
-    let finalContent = ''
+    this.sessionLog.bootstrapFromHistoryIfEmpty(this.historyMessages)
+    const historyForPrompt = this.sessionLog.getPromptHistory(this.config.contextHistoryLimit)
+    const baseSystemPrompt = buildSystemPrompt(this.chatType, this.promptConfig, this.context.ownerInfo, this.locale)
+    const systemPrompt = this.buildSystemPromptWithContextNotes(baseSystemPrompt)
+    coreAgent.setSystemPrompt(systemPrompt)
+    coreAgent.setTools(await this.createPiTools())
+    coreAgent.replaceMessages(this.toPiHistoryMessages(historyForPrompt))
+    this.emitStatus(onChunk, 'preparing', systemPrompt, coreAgent.state.messages, {
+      pendingUserMessage: userMessage,
+      force: true,
+    })
+    this.sessionLog.append('user', userMessage)
 
-    // 执行循环
-    while (this.toolRounds < this.config.maxToolRounds!) {
-      // 每轮开始时检查是否中止
+    const thinkingStartTime = new Map<number, number>()
+    const unsubscribe = coreAgent.subscribe((event: PiAgentEvent) => {
+      if (event.type === 'message_update') {
+        const update = event.assistantMessageEvent
+        if (update.type === 'text_delta') {
+          onChunk({ type: 'content', content: update.delta })
+          this.emitStatus(onChunk, 'responding', systemPrompt, coreAgent.state.messages)
+        } else if (update.type === 'thinking_start') {
+          thinkingStartTime.set(update.contentIndex, Date.now())
+          this.emitStatus(onChunk, 'thinking', systemPrompt, coreAgent.state.messages, { force: true })
+        } else if (update.type === 'thinking_delta') {
+          onChunk({ type: 'think', content: update.delta, thinkTag: 'thinking' })
+          this.emitStatus(onChunk, 'thinking', systemPrompt, coreAgent.state.messages)
+        } else if (update.type === 'thinking_end') {
+          const startedAt = thinkingStartTime.get(update.contentIndex)
+          const durationMs = startedAt ? Date.now() - startedAt : undefined
+          onChunk({
+            type: 'think',
+            content: '',
+            thinkTag: 'thinking',
+            thinkDurationMs: durationMs,
+          })
+          thinkingStartTime.delete(update.contentIndex)
+          this.emitStatus(onChunk, 'responding', systemPrompt, coreAgent.state.messages, { force: true })
+        }
+      } else if (event.type === 'tool_execution_start') {
+        const params = this.normalizeToolParams(event.toolName, (event.args || {}) as Record<string, unknown>)
+        this.toolsUsed.push(event.toolName)
+        onChunk({
+          type: 'tool_start',
+          toolName: event.toolName,
+          toolParams: params,
+        })
+        this.emitStatus(onChunk, 'tool_running', systemPrompt, coreAgent.state.messages, {
+          currentTool: event.toolName,
+          force: true,
+        })
+      } else if (event.type === 'tool_execution_end') {
+        onChunk({
+          type: 'tool_result',
+          toolName: event.toolName,
+          toolResult: event.result,
+        })
+        this.sessionLog.append('tool', `${event.toolName}: ${this.toCompactText(event.result)}`)
+        this.emitStatus(onChunk, 'thinking', systemPrompt, coreAgent.state.messages, { force: true })
+      } else if (event.type === 'turn_end') {
+        if (event.toolResults.length > 0) {
+          this.toolRounds += 1
+        }
+        this.emitStatus(onChunk, 'thinking', systemPrompt, coreAgent.state.messages, { force: true })
+      } else if (event.type === 'message_end') {
+        if (event.message.role === 'assistant') {
+          this.addPiUsage(event.message.usage)
+          this.emitStatus(onChunk, 'responding', systemPrompt, coreAgent.state.messages, { force: true })
+        }
+      }
+    })
+
+    const forwardAbort = () => coreAgent.abort()
+    if (this.abortSignal) {
+      this.abortSignal.addEventListener('abort', forwardAbort, { once: true })
+    }
+
+    try {
+      await coreAgent.prompt(userMessage)
+
       if (this.isAborted()) {
+        this.emitStatus(onChunk, 'aborted', systemPrompt, coreAgent.state.messages, { force: true })
         onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
         return {
-          content: finalContent,
+          content: '',
           toolsUsed: this.toolsUsed,
           toolRounds: this.toolRounds,
           totalUsage: this.totalUsage,
         }
       }
 
-      let accumulatedContent = ''
-      let roundContent = ''
-      let toolCalls: ToolCall[] | undefined
-      let thinkStartAt: number | null = null // 记录思考开始时间
-      const parser = createStreamParser({
-        onText: (text) => {
-          roundContent += text
-          onChunk({ type: 'content', content: text })
-        },
-        onThinkStart: () => {
-          thinkStartAt = Date.now()
-        },
-        onThink: (text, tag) => {
-          onChunk({ type: 'think', content: text, thinkTag: tag })
-        },
-        onThinkEnd: (tag) => {
-          if (thinkStartAt === null) return
-          const durationMs = Date.now() - thinkStartAt
-          thinkStartAt = null
-          onChunk({ type: 'think', content: '', thinkTag: tag, thinkDurationMs: durationMs })
-        },
-      })
-
-      // 流式调用 LLM（传入 abortSignal）
-      for await (const chunk of chatStream(this.messages, {
-        ...this.config.llmOptions,
-        tools,
-        abortSignal: this.abortSignal,
-      })) {
-        // 每个 chunk 时检查是否中止
-        if (this.isAborted()) {
-          onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
-          return {
-            content: finalContent + roundContent,
-            toolsUsed: this.toolsUsed,
-            toolRounds: this.toolRounds,
-            totalUsage: this.totalUsage,
-          }
-        }
-        if (chunk.content) {
-          accumulatedContent += chunk.content
-          // 按标签切分后输出到内容/思考区
-          parser.push(chunk.content)
-        }
-
-        if (chunk.tool_calls) {
-          toolCalls = chunk.tool_calls
-          aiLogger.info('Agent', 'tool_calls received', {
-            count: chunk.tool_calls.length,
-            names: chunk.tool_calls.map((tc) => tc.function.name),
-          })
-        }
-
-        // 累加 Token 使用量（流式响应在最后一个 chunk 返回 usage）
-        if (chunk.usage) {
-          this.addUsage(chunk.usage)
-        }
-
-        if (chunk.isFinished) {
-          aiLogger.info('Agent', 'Stream ended', {
-            finishReason: chunk.finishReason,
-            hasToolCalls: !!toolCalls,
-            toolCallsCount: toolCalls?.length ?? 0,
-          })
-          // 收尾：清空解析器缓冲
-          parser.flush()
-
-          // 只有当 finishReason 不是 tool_calls 且 没有收到 toolCalls 时，才尝试 fallback 解析
-          // 修复：某些第三方 API（如 Gemini 中转）返回 finishReason="stop" 但实际有 tool_calls
-          if (chunk.finishReason !== 'tool_calls' && !toolCalls) {
-            // Fallback: 检查内容中是否有 <tool_call> 标签
-            if (hasToolCallTags(accumulatedContent)) {
-              // 提取 thinking 内容
-              const { cleanContent } = extractThinkingContent(accumulatedContent)
-
-              // 解析 tool_call 标签
-              const fallbackToolCalls = parseToolCallTags(accumulatedContent)
-              if (fallbackToolCalls && fallbackToolCalls.length > 0) {
-                toolCalls = fallbackToolCalls
-                // 不返回，继续执行工具调用
-              } else {
-                // 解析失败，作为普通响应处理
-                const sanitizedContent = stripToolCallTags(cleanContent)
-                if (sanitizedContent.startsWith(roundContent)) {
-                  const remainingContent = sanitizedContent.slice(roundContent.length)
-                  if (remainingContent) {
-                    onChunk({ type: 'content', content: remainingContent })
-                  }
-                } else if (sanitizedContent) {
-                  aiLogger.warn('Agent', 'Stream content differs from cleaned result, skipping resend', {
-                    roundContentLength: roundContent.length,
-                    sanitizedLength: sanitizedContent.length,
-                  })
-                }
-                finalContent = sanitizedContent
-                aiLogger.info('Agent', 'AI response', finalContent)
-                onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
-                return {
-                  content: finalContent,
-                  toolsUsed: this.toolsUsed,
-                  toolRounds: this.toolRounds,
-                  totalUsage: this.totalUsage,
-                }
-              }
-            } else {
-              // 没有 tool_call 标签，正常完成
-              const sanitizedContent = stripToolCallTags(extractThinkingContent(accumulatedContent).cleanContent)
-              if (sanitizedContent.startsWith(roundContent)) {
-                const remainingContent = sanitizedContent.slice(roundContent.length)
-                if (remainingContent) {
-                  onChunk({ type: 'content', content: remainingContent })
-                }
-              } else if (sanitizedContent) {
-                aiLogger.warn('Agent', 'Stream content differs from cleaned result, skipping resend', {
-                  roundContentLength: roundContent.length,
-                  sanitizedLength: sanitizedContent.length,
-                })
-              }
-              finalContent = sanitizedContent
-              aiLogger.info('Agent', 'AI response', finalContent)
-              onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
-              return {
-                content: finalContent,
-                toolsUsed: this.toolsUsed,
-                toolRounds: this.toolRounds,
-                totalUsage: this.totalUsage,
-              }
-            }
-          }
-        }
+      if (coreAgent.state.error) {
+        throw new Error(coreAgent.state.error)
       }
 
-      // 兜底收尾：防止未收到 isFinished
-      parser.flush()
+      const finalAssistant = [...coreAgent.state.messages]
+        .reverse()
+        .find((msg): msg is PiAssistantMessage => msg.role === 'assistant')
 
-      // 处理工具调用
-      if (toolCalls && toolCalls.length > 0) {
-        // 通知前端开始执行工具（包含参数和时间范围）
-        for (const tc of toolCalls) {
-          let toolParams: Record<string, unknown> | undefined
-          try {
-            toolParams = JSON.parse(tc.function.arguments || '{}')
+      const finalRawContent =
+        finalAssistant?.content
+          .filter((item) => item.type === 'text')
+          .map((item) => item.text)
+          .join('') || ''
 
-            // 对于消息获取类工具，用用户配置的 limit 覆盖 LLM 传递的值（保持显示一致）
-            const toolsWithLimit = ['search_messages', 'get_recent_messages', 'get_conversation_between']
-            if (this.context.maxMessagesLimit && toolsWithLimit.includes(tc.function.name)) {
-              toolParams = {
-                ...toolParams,
-                limit: this.context.maxMessagesLimit, // 用户配置优先
-              }
-            }
-
-            // 对于搜索类工具，添加时间范围信息
-            if (
-              this.context.timeFilter &&
-              (tc.function.name === 'search_messages' || tc.function.name === 'get_recent_messages')
-            ) {
-              toolParams = {
-                ...toolParams,
-                _timeFilter: this.context.timeFilter,
-              }
-            }
-          } catch {
-            toolParams = undefined
-          }
-          onChunk({ type: 'tool_start', toolName: tc.function.name, toolParams })
-        }
-
-        await this.handleToolCalls(toolCalls, onChunk)
-        this.toolRounds++
-      }
-    }
-
-    // 超过最大轮数
-    aiLogger.warn('Agent', 'Max tool call rounds reached', { maxRounds: this.config.maxToolRounds })
-
-    // 检查是否已中止
-    if (this.isAborted()) {
+      const finalContent = stripToolCallTags(extractThinkingContent(finalRawContent).cleanContent)
+      this.sessionLog.append('assistant', finalContent)
+      this.emitStatus(onChunk, 'completed', systemPrompt, coreAgent.state.messages, { force: true })
       onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
+
       return {
         content: finalContent,
         toolsUsed: this.toolsUsed,
         toolRounds: this.toolRounds,
         totalUsage: this.totalUsage,
       }
-    }
-
-    this.messages.push({
-      role: 'user',
-      content: agentT('ai.agent.answerWithoutTools', this.locale),
-    })
-
-    // 最后一轮不带 tools（传入 abortSignal）
-    let finalRawContent = ''
-    let finalThinkStartAt: number | null = null // 记录最终思考开始时间
-    const finalParser = createStreamParser({
-      onText: (text) => {
-        finalContent += text
-        onChunk({ type: 'content', content: text })
-      },
-      onThinkStart: () => {
-        finalThinkStartAt = Date.now()
-      },
-      onThink: (text, tag) => {
-        onChunk({ type: 'think', content: text, thinkTag: tag })
-      },
-      onThinkEnd: (tag) => {
-        if (finalThinkStartAt === null) return
-        const durationMs = Date.now() - finalThinkStartAt
-        finalThinkStartAt = null
-        onChunk({ type: 'think', content: '', thinkTag: tag, thinkDurationMs: durationMs })
-      },
-    })
-    for await (const chunk of chatStream(this.messages, {
-      ...this.config.llmOptions,
-      abortSignal: this.abortSignal,
-    })) {
-      if (this.isAborted()) {
-        onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
-        break
+    } catch (error) {
+      this.sessionLog.append('note', `Run failed: ${this.toCompactText(error)}`)
+      const phase: AgentRuntimeStatus['phase'] = this.isAborted() ? 'aborted' : 'error'
+      this.emitStatus(onChunk, phase, systemPrompt, coreAgent.state.messages, { force: true })
+      throw error
+    } finally {
+      unsubscribe()
+      if (this.abortSignal) {
+        this.abortSignal.removeEventListener('abort', forwardAbort)
       }
-      if (chunk.content) {
-        finalRawContent += chunk.content
-        finalParser.push(chunk.content)
-      }
-      // 累加 Token 使用量
-      if (chunk.usage) {
-        this.addUsage(chunk.usage)
-      }
-      if (chunk.isFinished) {
-        finalParser.flush()
-        const sanitizedContent = stripToolCallTags(extractThinkingContent(finalRawContent).cleanContent)
-        if (sanitizedContent.startsWith(finalContent)) {
-          const remainingContent = sanitizedContent.slice(finalContent.length)
-          if (remainingContent) {
-            finalContent += remainingContent
-            onChunk({ type: 'content', content: remainingContent })
-          }
-        } else if (sanitizedContent) {
-          aiLogger.warn('Agent', 'Final content differs from cleaned result, skipping resend', {
-            finalContentLength: finalContent.length,
-            sanitizedLength: sanitizedContent.length,
-          })
-          finalContent = sanitizedContent
-        }
-        onChunk({ type: 'done', isFinished: true, usage: this.totalUsage })
-      }
-    }
-
-    // 兜底收尾：防止未收到 isFinished
-    finalParser.flush()
-
-    return {
-      content: finalContent,
-      toolsUsed: this.toolsUsed,
-      toolRounds: this.toolRounds,
-      totalUsage: this.totalUsage,
-    }
-  }
-
-  /**
-   * 处理工具调用
-   */
-  private async handleToolCalls(toolCalls: ToolCall[], onChunk?: (chunk: AgentStreamChunk) => void): Promise<void> {
-    // 记录调用的工具及参数
-    for (const tc of toolCalls) {
-      aiLogger.info('Agent', `Tool call: ${tc.function.name}`, tc.function.arguments)
-    }
-
-    // 添加 assistant 消息（包含 tool_calls）
-    this.messages.push({
-      role: 'assistant',
-      content: '',
-      tool_calls: toolCalls,
-    })
-
-    // 执行工具（传递 locale 用于工具返回结果的国际化）
-    const results = await executeToolCalls(toolCalls, { ...this.context, locale: this.locale })
-
-    // 添加 tool 消息
-    for (let i = 0; i < toolCalls.length; i++) {
-      const tc = toolCalls[i]
-      const result = results[i]
-
-      this.toolsUsed.push(tc.function.name)
-
-      // 通知前端工具执行结果
-      if (onChunk) {
-        onChunk({
-          type: 'tool_result',
-          toolName: tc.function.name,
-          toolResult: result.success ? result.result : result.error,
-        })
-      }
-
-      // 记录工具执行结果
-      if (result.success) {
-        aiLogger.info('Agent', `Tool result: ${tc.function.name}`, result.result)
-      } else {
-        aiLogger.warn('Agent', `Tool failed: ${tc.function.name}`, result.error)
-      }
-
-      // 添加工具结果消息
-      this.messages.push({
-        role: 'tool',
-        content: result.success
-          ? JSON.stringify(result.result)
-          : agentT('ai.agent.toolError', this.locale, { error: result.error }),
-        tool_call_id: tc.id,
-      })
     }
   }
 }

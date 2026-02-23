@@ -34,6 +34,7 @@ const {
   currentToolStatus,
   toolsUsedInCurrentRound,
   sessionTokenUsage,
+  agentStatus,
   sendMessage,
   loadConversation,
   startNewConversation,
@@ -371,6 +372,7 @@ watch(
             <ChatStatusBar
               :chat-type="currentChatType"
               :session-token-usage="sessionTokenUsage"
+              :agent-status="agentStatus"
               :has-l-l-m-config="hasLLMConfig"
               :is-checking-config="isCheckingConfig"
             />

@@ -76,16 +76,42 @@ export interface ChatStreamChunk {
 }
 
 // Agent API 类型
+export interface TokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+export interface AgentRuntimeStatus {
+  phase: 'preparing' | 'thinking' | 'tool_running' | 'responding' | 'completed' | 'aborted' | 'error'
+  round: number
+  toolsUsed: number
+  currentTool?: string
+  contextTokens: number
+  contextWindow: number
+  contextUsage: number
+  totalUsage: TokenUsage
+  nodeCount?: number
+  tagCount?: number
+  segmentSize?: number
+  checkoutCount?: number
+  activeAnchorNodeId?: string | null
+  updatedAt: number
+}
+
 export interface AgentStreamChunk {
-  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'done' | 'error'
+  type: 'content' | 'think' | 'tool_start' | 'tool_result' | 'status' | 'done' | 'error'
   content?: string
   thinkTag?: string
   thinkDurationMs?: number
   toolName?: string
   toolParams?: Record<string, unknown>
   toolResult?: unknown
+  status?: AgentRuntimeStatus
   error?: string
   isFinished?: boolean
+  /** Token 使用量（type=done 时返回累计值） */
+  usage?: TokenUsage
 }
 
 export interface AgentResult {
@@ -96,6 +122,7 @@ export interface AgentResult {
 
 export interface ToolContext {
   sessionId: string
+  conversationId?: string
   timeFilter?: { startTs: number; endTs: number }
 }
 
