@@ -88,7 +88,7 @@
       },
       "agent": {
         "label": "Agent",
-        "contextUsage": "{used}/{total} ({percent}%)",
+        "contextTokens": "Context",
         "stats": "seg {segment} · tags {tags}",
         "phase": {
           "preparing": "Preparing",
@@ -98,6 +98,15 @@
           "completed": "Completed",
           "aborted": "Stopped",
           "error": "Error"
+        },
+        "phaseShort": {
+          "preparing": "Prep",
+          "thinking": "Think",
+          "tool_running": "Tool",
+          "responding": "Reply",
+          "completed": "Done",
+          "aborted": "Stop",
+          "error": "Err"
         }
       },
       "tokenUsageTitle": "Total token usage in this session",

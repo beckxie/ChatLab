@@ -88,7 +88,7 @@
       },
       "agent": {
         "label": "Agent",
-        "contextUsage": "{used}/{total} ({percent}%)",
+        "contextTokens": "上下文",
         "stats": "段 {segment} · 标签 {tags}",
         "phase": {
           "preparing": "准备中",
@@ -97,6 +97,15 @@
           "responding": "生成中",
           "completed": "已完成",
           "aborted": "已停止",
+          "error": "错误"
+        },
+        "phaseShort": {
+          "preparing": "准备",
+          "thinking": "思考",
+          "tool_running": "工具",
+          "responding": "生成",
+          "completed": "完成",
+          "aborted": "停止",
           "error": "错误"
         }
       },

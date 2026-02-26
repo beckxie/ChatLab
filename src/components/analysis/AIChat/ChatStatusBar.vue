@@ -6,32 +6,16 @@ import { useToast } from '@nuxt/ui/runtime/composables/useToast.js'
 import { usePromptStore } from '@/stores/prompt'
 import { useLayoutStore } from '@/stores/layout'
 import { useLLMStore } from '@/stores/llm'
+import type { AgentRuntimeStatus } from '@electron/shared/types'
 
 const { t, locale } = useI18n()
 const toast = useToast()
-
-interface AgentRuntimeStatusView {
-  phase: 'preparing' | 'thinking' | 'tool_running' | 'responding' | 'completed' | 'aborted' | 'error'
-  round: number
-  toolsUsed: number
-  currentTool?: string
-  contextTokens: number
-  contextWindow: number
-  contextUsage: number
-  totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number }
-  nodeCount?: number
-  tagCount?: number
-  segmentSize?: number
-  checkoutCount?: number
-  activeAnchorNodeId?: string | null
-  updatedAt: number
-}
 
 // Props
 const props = defineProps<{
   chatType: 'group' | 'private'
   sessionTokenUsage: { totalTokens: number }
-  agentStatus?: AgentRuntimeStatusView | null
+  agentStatus?: AgentRuntimeStatus | null
   hasLLMConfig: boolean
   isCheckingConfig: boolean
 }>()
@@ -67,29 +51,7 @@ const agentPhaseText = computed(() => {
 
 const agentPhaseShortText = computed(() => {
   if (!props.agentStatus) return ''
-  if (locale.value.startsWith('zh')) {
-    const map: Record<AgentRuntimeStatusView['phase'], string> = {
-      preparing: '准备',
-      thinking: '思考',
-      tool_running: '工具',
-      responding: '生成',
-      completed: '完成',
-      aborted: '停止',
-      error: '错误',
-    }
-    return map[props.agentStatus.phase]
-  }
-
-  const map: Record<AgentRuntimeStatusView['phase'], string> = {
-    preparing: 'Prep',
-    thinking: 'Think',
-    tool_running: 'Tool',
-    responding: 'Reply',
-    completed: 'Done',
-    aborted: 'Stop',
-    error: 'Err',
-  }
-  return map[props.agentStatus.phase]
+  return t(`ai.chat.statusBar.agent.phaseShort.${props.agentStatus.phase}`)
 })
 
 const agentPhaseClass = computed(() => {
@@ -113,32 +75,14 @@ const agentPhaseClass = computed(() => {
   }
 })
 
-const contextUsagePercent = computed(() => {
-  if (!props.agentStatus) return 0
-  return Math.round((props.agentStatus.contextUsage || 0) * 100)
-})
-
-const contextUsageWidth = computed(() => `${Math.max(0, Math.min(100, contextUsagePercent.value))}%`)
-
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return '0'
   return new Intl.NumberFormat().format(Math.max(0, Math.round(value)))
 }
 
-const contextUsageText = computed(() => {
+const contextTokensText = computed(() => {
   if (!props.agentStatus) return '--'
-  return t('ai.chat.statusBar.agent.contextUsage', {
-    used: formatNumber(props.agentStatus.contextTokens),
-    total: formatNumber(props.agentStatus.contextWindow),
-    percent: contextUsagePercent.value,
-  })
-})
-
-const agentStatsText = computed(() => {
-  if (!props.agentStatus) return ''
-  const segment = props.agentStatus.segmentSize ?? 0
-  const tags = props.agentStatus.tagCount ?? 0
-  return t('ai.chat.statusBar.agent.stats', { segment, tags })
+  return formatCompactNumber(props.agentStatus.contextTokens)
 })
 
 function formatCompactNumber(value: number): string {
@@ -155,8 +99,7 @@ const agentCompactTitle = computed(() => {
   if (!props.agentStatus) return ''
   return [
     `${t('ai.chat.statusBar.agent.label')}: ${agentPhaseText.value}`,
-    contextUsageText.value,
-    agentStatsText.value,
+    `${t('ai.chat.statusBar.agent.contextTokens')}: ${formatNumber(props.agentStatus.contextTokens)}`,
     `${t('ai.chat.statusBar.tokenUsageTitle')}: ${totalTokenUsageText.value}`,
   ].join('\n')
 })
@@ -359,13 +302,8 @@ async function openAiLogFile() {
         <span class="rounded px-1 py-0.5 text-[10px] font-medium" :class="agentPhaseClass">
           {{ agentPhaseShortText }}
         </span>
-        <div class="h-1.5 w-10 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-          <div
-            class="h-full rounded-full bg-pink-500 transition-all duration-300"
-            :style="{ width: contextUsageWidth }"
-          />
-        </div>
-        <span class="text-[10px] text-gray-500 dark:text-gray-400">{{ contextUsagePercent }}%</span>
+        <UIcon name="i-heroicons-document-text" class="h-3 w-3 text-gray-400 dark:text-gray-500" />
+        <span class="text-[10px] text-gray-500 dark:text-gray-400">{{ contextTokensText }}</span>
       </div>
 
       <div
