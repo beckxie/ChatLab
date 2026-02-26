@@ -10,7 +10,8 @@ import { getEmbeddingService } from '../embedding'
 import { getVectorStore } from '../store'
 import { getSessionChunks } from '../chunking'
 import { loadRAGConfig } from '../config'
-import { chat } from '../../llm'
+import { completeSimple, type TextContent as PiTextContent } from '@mariozechner/pi-ai'
+import { getActiveConfig, buildPiModel } from '../../llm'
 import { aiLogger as logger } from '../../logger'
 
 /**
@@ -33,21 +34,28 @@ const QUERY_REWRITE_PROMPT = `你是一个查询优化专家。请将用户的�
  */
 async function rewriteQuery(query: string, abortSignal?: AbortSignal): Promise<string> {
   try {
+    const activeConfig = getActiveConfig()
+    if (!activeConfig) return query
+
+    const piModel = buildPiModel(activeConfig)
     const prompt = QUERY_REWRITE_PROMPT.replace('{query}', query)
 
-    const response = await chat(
-      [
-        { role: 'system', content: '你是一个查询优化专家，专门将用户问题改写为更适合语义检索的形式。' },
-        { role: 'user', content: prompt },
-      ],
-      {
-        temperature: 0.3,
-        maxTokens: 200,
-        abortSignal,
-      }
-    )
+    const result = await completeSimple(piModel, {
+      systemPrompt: '你是一个查询优化专家，专门将用户问题改写为更适合语义检索的形式。',
+      messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+    }, {
+      apiKey: activeConfig.apiKey,
+      temperature: 0.3,
+      maxTokens: 200,
+      signal: abortSignal,
+    })
 
-    const rewritten = response.content.trim()
+    const rewritten = result.content
+      .filter((item): item is PiTextContent => item.type === 'text')
+      .map((item) => item.text)
+      .join('')
+      .trim()
+
     return rewritten || query
   } catch (error) {
     logger.warn('[Semantic Pipeline] Query rewrite failed, using original query:', error)

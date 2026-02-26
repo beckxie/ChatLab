@@ -8,10 +8,40 @@
  */
 
 import Database from 'better-sqlite3'
-import { chat } from '../llm'
+import { completeSimple, type TextContent as PiTextContent } from '@mariozechner/pi-ai'
+import { getActiveConfig, buildPiModel } from '../llm'
 import { getDbPath, openDatabase } from '../../database/core'
 import { aiLogger } from '../logger'
 import { t } from '../../i18n'
+
+/** 调用 LLM 生成文本（直接使用 pi-ai completeSimple） */
+async function llmComplete(
+  systemPrompt: string,
+  userPrompt: string,
+  options?: { temperature?: number; maxTokens?: number }
+): Promise<string> {
+  const activeConfig = getActiveConfig()
+  if (!activeConfig) {
+    throw new Error(t('llm.notConfigured'))
+  }
+
+  const piModel = buildPiModel(activeConfig)
+  const now = Date.now()
+
+  const result = await completeSimple(piModel, {
+    systemPrompt,
+    messages: [{ role: 'user', content: userPrompt, timestamp: now }],
+  }, {
+    apiKey: activeConfig.apiKey,
+    temperature: options?.temperature,
+    maxTokens: options?.maxTokens,
+  })
+
+  return result.content
+    .filter((item): item is PiTextContent => item.type === 'text')
+    .map((item) => item.text)
+    .join('')
+}
 
 /** 最小消息数阈值（少于此数量不生成摘要） */
 const MIN_MESSAGE_COUNT = 3
@@ -408,17 +438,12 @@ export async function generateSessionSummary(
  * 直接生成摘要（适用于短会话）
  */
 async function generateDirectSummary(content: string, lengthLimit: number, locale: string): Promise<string> {
-  const response = await chat(
-    [
-      { role: 'system', content: t('summary.systemPromptDirect') },
-      { role: 'user', content: buildSummaryPrompt(content, lengthLimit, locale) },
-    ],
-    {
-      temperature: 0.3,
-      maxTokens: 300,
-    }
+  const result = await llmComplete(
+    t('summary.systemPromptDirect'),
+    buildSummaryPrompt(content, lengthLimit, locale),
+    { temperature: 0.3, maxTokens: 300 }
   )
-  return response.content.trim()
+  return result.trim()
 }
 
 /**
@@ -437,17 +462,12 @@ async function generateMapReduceSummary(
 
   for (let i = 0; i < segments.length; i++) {
     const segmentContent = formatMessages(segments[i])
-    const response = await chat(
-      [
-        { role: 'system', content: t('summary.systemPromptDirect') },
-        { role: 'user', content: buildSubSummaryPrompt(segmentContent, locale) },
-      ],
-      {
-        temperature: 0.3,
-        maxTokens: 100,
-      }
+    const result = await llmComplete(
+      t('summary.systemPromptDirect'),
+      buildSubSummaryPrompt(segmentContent, locale),
+      { temperature: 0.3, maxTokens: 100 }
     )
-    subSummaries.push(response.content.trim())
+    subSummaries.push(result.trim())
   }
 
   // 2. Reduce：合并子摘要
@@ -455,18 +475,13 @@ async function generateMapReduceSummary(
     return subSummaries[0]
   }
 
-  const mergeResponse = await chat(
-    [
-      { role: 'system', content: t('summary.systemPromptMerge') },
-      { role: 'user', content: buildMergePrompt(subSummaries, lengthLimit, locale) },
-    ],
-    {
-      temperature: 0.3,
-      maxTokens: 300,
-    }
+  const mergeResult = await llmComplete(
+    t('summary.systemPromptMerge'),
+    buildMergePrompt(subSummaries, lengthLimit, locale),
+    { temperature: 0.3, maxTokens: 300 }
   )
 
-  return mergeResponse.content.trim()
+  return mergeResult.trim()
 }
 
 /**
