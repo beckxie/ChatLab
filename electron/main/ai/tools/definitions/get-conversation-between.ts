@@ -4,7 +4,7 @@ import type { ToolContext } from '../types'
 import { timeParamProperties } from '../utils/schemas'
 import * as workerManager from '../../../worker/workerManager'
 import { parseExtendedTimeParams } from '../utils/time-params'
-import { formatTimeRange, formatMessageCompact, t } from '../utils/format'
+import { formatTimeRange, t } from '../utils/format'
 
 const schema = Type.Object({
   member_id_1: Type.Number({ description: 'ai.tools.get_conversation_between.params.member_id_1' }),
@@ -51,7 +51,7 @@ export function createTool(context: ToolContext): AgentTool<typeof schema> {
         member1: result.member1Name,
         member2: result.member2Name,
         timeRange: formatTimeRange(effectiveTimeFilter, locale),
-        conversation: result.messages.map((m) => formatMessageCompact(m, locale)),
+        rawMessages: result.messages,
       }
 
       return {

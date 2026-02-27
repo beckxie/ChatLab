@@ -3,7 +3,7 @@ import type { AgentTool } from '@mariozechner/pi-agent-core'
 import type { ToolContext } from '../types'
 import * as workerManager from '../../../worker/workerManager'
 import { parseExtendedTimeParams } from '../utils/time-params'
-import { formatTimeRange, formatMessageCompact } from '../utils/format'
+import { formatTimeRange } from '../utils/format'
 import { timeParamProperties } from '../utils/schemas'
 
 const schema = Type.Object({
@@ -38,7 +38,7 @@ export function createTool(context: ToolContext): AgentTool<typeof schema> {
         total: result.total,
         returned: result.messages.length,
         timeRange: formatTimeRange(effectiveTimeFilter, locale),
-        messages: result.messages.map((m) => formatMessageCompact(m, locale)),
+        rawMessages: result.messages,
       }
 
       return {

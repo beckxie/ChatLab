@@ -373,6 +373,8 @@ interface AiApi {
   getMessages: (conversationId: string) => Promise<AIMessage[]>
   deleteMessage: (messageId: string) => Promise<boolean>
   showAiLogFile: () => Promise<{ success: boolean; path?: string; error?: string }>
+  getDefaultDesensitizeRules: (locale: string) => Promise<DesensitizeRule[]>
+  mergeDesensitizeRules: (existingRules: DesensitizeRule[], locale: string) => Promise<DesensitizeRule[]>
   // 自定义筛选（支持分页）
   filterMessagesWithContext: (
     sessionId: string,
@@ -617,6 +619,29 @@ interface OwnerInfo {
   displayName: string
 }
 
+/** 单条脱敏规则 */
+interface DesensitizeRule {
+  id: string
+  label: string
+  pattern: string
+  replacement: string
+  enabled: boolean
+  builtin: boolean
+  locales: string[]
+}
+
+/** 聊天记录预处理配置 */
+interface PreprocessConfig {
+  dataCleaning: boolean
+  mergeConsecutive: boolean
+  mergeWindowSeconds?: number
+  blacklistKeywords: string[]
+  denoise: boolean
+  desensitize: boolean
+  desensitizeRules: DesensitizeRule[]
+  anonymizeNames: boolean
+}
+
 interface ToolContext {
   sessionId: string
   conversationId?: string
@@ -625,6 +650,10 @@ interface ToolContext {
   maxMessagesLimit?: number
   /** Owner 信息（当前用户在对话中的身份） */
   ownerInfo?: OwnerInfo
+  /** 语言环境 */
+  locale?: string
+  /** 聊天记录预处理配置 */
+  preprocessConfig?: PreprocessConfig
 }
 
 // 用户自定义提示词配置
@@ -871,6 +900,8 @@ export {
   AgentRuntimeStatus,
   AgentResult,
   ToolContext,
+  DesensitizeRule,
+  PreprocessConfig,
   PromptConfig,
   TokenUsage,
   CacheDirectoryInfo,

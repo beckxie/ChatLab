@@ -2,7 +2,7 @@ import { Type } from '@mariozechner/pi-ai'
 import type { AgentTool } from '@mariozechner/pi-agent-core'
 import type { ToolContext } from '../types'
 import * as workerManager from '../../../worker/workerManager'
-import { formatMessageCompact, t } from '../utils/format'
+import { t } from '../utils/format'
 
 const schema = Type.Object({
   message_ids: Type.Array(Type.Number(), { description: 'ai.tools.get_message_context.params.message_ids' }),
@@ -37,7 +37,7 @@ export function createTool(context: ToolContext): AgentTool<typeof schema> {
         totalMessages: messages.length,
         contextSize: contextSize,
         requestedMessageIds: params.message_ids,
-        messages: messages.map((m) => formatMessageCompact(m, locale)),
+        rawMessages: messages,
       }
 
       return {

@@ -2,6 +2,8 @@
  * AI Tools 类型定义
  */
 
+import type { PreprocessConfig } from '../preprocessor'
+
 /** Owner 信息（当前用户在对话中的身份） */
 export interface OwnerInfo {
   /** Owner 的 platformId */
@@ -30,4 +32,6 @@ export interface ToolContext {
   ownerInfo?: OwnerInfo
   /** 语言环境（用于工具返回结果的国际化） */
   locale?: string
+  /** 聊天记录预处理配置（全局） */
+  preprocessConfig?: PreprocessConfig
 }

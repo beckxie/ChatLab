@@ -100,10 +100,37 @@ export interface AgentResult {
   toolRounds: number
 }
 
+/** 单条脱敏规则 */
+export interface DesensitizeRule {
+  id: string
+  label: string
+  pattern: string
+  replacement: string
+  enabled: boolean
+  builtin: boolean
+  locales: string[]
+}
+
+/** 聊天记录预处理配置 */
+export interface PreprocessConfig {
+  dataCleaning: boolean
+  mergeConsecutive: boolean
+  mergeWindowSeconds?: number
+  blacklistKeywords: string[]
+  denoise: boolean
+  desensitize: boolean
+  desensitizeRules: DesensitizeRule[]
+  anonymizeNames: boolean
+}
+
 export interface ToolContext {
   sessionId: string
   conversationId?: string
   timeFilter?: { startTs: number; endTs: number }
+  maxMessagesLimit?: number
+  ownerInfo?: { platformId: string; displayName: string }
+  locale?: string
+  preprocessConfig?: PreprocessConfig
 }
 
 // AI 服务配置类型（前端用）
@@ -463,6 +490,14 @@ export const aiApi = {
   showAiLogFile: (): Promise<{ success: boolean; path?: string; error?: string }> => {
     return ipcRenderer.invoke('ai:showLogFile')
   },
+
+  getDefaultDesensitizeRules: (locale: string): Promise<DesensitizeRule[]> => {
+    return ipcRenderer.invoke('ai:getDefaultDesensitizeRules', locale)
+  },
+
+  mergeDesensitizeRules: (existingRules: DesensitizeRule[], locale: string): Promise<DesensitizeRule[]> => {
+    return ipcRenderer.invoke('ai:mergeDesensitizeRules', existingRules, locale)
+  },
 }
 
 // ==================== LLM API ====================
@@ -647,12 +682,34 @@ export const agentApi = {
     locale?: string,
     maxHistoryRounds?: number
   ): { requestId: string; promise: Promise<{ success: boolean; result?: AgentResult; error?: string }> } => {
+    // 防御性处理：确保传给 IPC 的 context 是“可结构化克隆”的纯对象
+    // 避免调用方误传入响应式 Proxy（例如 Pinia/Vue state）导致 invoke 失败
+    const sanitizedContext: ToolContext = {
+      sessionId: context.sessionId,
+      conversationId: context.conversationId,
+      timeFilter: context.timeFilter
+        ? {
+            startTs: context.timeFilter.startTs,
+            endTs: context.timeFilter.endTs,
+          }
+        : undefined,
+      maxMessagesLimit: context.maxMessagesLimit,
+      ownerInfo: context.ownerInfo
+        ? {
+            platformId: context.ownerInfo.platformId,
+            displayName: context.ownerInfo.displayName,
+          }
+        : undefined,
+      locale: context.locale,
+      preprocessConfig: context.preprocessConfig,
+    }
+
     const requestId = `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     console.log(
       '[preload] Agent runStream 开始，requestId:',
       requestId,
       'conversationId:',
-      context.conversationId ?? 'none',
+      sanitizedContext.conversationId ?? 'none',
       'chatType:',
       chatType ?? 'group',
       'hasPromptConfig:',
@@ -694,7 +751,16 @@ export const agentApi = {
       ipcRenderer.on('agent:complete', completeHandler)
 
       ipcRenderer
-        .invoke('agent:runStream', requestId, userMessage, context, chatType, promptConfig, locale, maxHistoryRounds)
+        .invoke(
+          'agent:runStream',
+          requestId,
+          userMessage,
+          sanitizedContext,
+          chatType,
+          promptConfig,
+          locale,
+          maxHistoryRounds
+        )
         .then((result) => {
           console.log('[preload] Agent invoke 返回:', result)
           if (!result.success) {

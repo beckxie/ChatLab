@@ -14,6 +14,7 @@ import { ensureAvatarColumn } from './basic'
  */
 export interface MessageResult {
   id: number
+  senderId: number
   senderName: string
   senderPlatformId: string
   senderAliases: string[]
@@ -49,6 +50,7 @@ export interface MessagesWithTotal {
  */
 interface DbMessageRow {
   id: number
+  senderId: number
   senderName: string
   senderPlatformId: string
   aliases: string | null
@@ -78,6 +80,7 @@ function sanitizeMessageRow(row: DbMessageRow): MessageResult {
 
   return {
     id: Number(row.id),
+    senderId: Number(row.senderId),
     senderName: String(row.senderName || ''),
     senderPlatformId: String(row.senderPlatformId || ''),
     senderAliases: aliases,
@@ -155,6 +158,7 @@ export function getRecentMessages(sessionId: string, filter?: TimeFilter, limit:
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -218,6 +222,7 @@ export function getAllRecentMessages(sessionId: string, filter?: TimeFilter, lim
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -301,6 +306,7 @@ export function searchMessages(
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -391,6 +397,7 @@ export function getMessageContext(
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -450,6 +457,7 @@ export function getMessagesBefore(
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -522,6 +530,7 @@ export function getMessagesAfter(
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,
@@ -622,6 +631,7 @@ export function getConversationBetween(
   const sql = `
     SELECT
       msg.id,
+      m.id as senderId,
       COALESCE(m.group_nickname, m.account_name, m.platform_id) as senderName,
       m.platform_id as senderPlatformId,
       m.aliases,

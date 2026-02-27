@@ -78,7 +78,9 @@ export function searchSessions(
     const previewSql = `
       SELECT
         m.id,
+        mb.id as senderId,
         COALESCE(mb.group_nickname, mb.account_name, mb.platform_id) as senderName,
+        mb.platform_id as senderPlatformId,
         m.content,
         m.ts as timestamp
       FROM message_context mc
@@ -93,7 +95,9 @@ export function searchSessions(
     for (const session of sessions) {
       const previewMessages = db.prepare(previewSql).all(session.id, previewCount) as Array<{
         id: number
+        senderId: number
         senderName: string
+        senderPlatformId: string
         content: string | null
         timestamp: number
       }>
@@ -164,7 +168,9 @@ export function getSessionMessages(
     const messagesSql = `
       SELECT
         m.id,
+        mb.id as senderId,
         COALESCE(mb.group_nickname, mb.account_name, mb.platform_id) as senderName,
+        mb.platform_id as senderPlatformId,
         m.content,
         m.ts as timestamp
       FROM message_context mc
@@ -176,7 +182,9 @@ export function getSessionMessages(
     `
     const messages = db.prepare(messagesSql).all(chatSessionId, limit) as Array<{
       id: number
+      senderId: number
       senderName: string
+      senderPlatformId: string
       content: string | null
       timestamp: number
     }>

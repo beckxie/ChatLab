@@ -2,7 +2,7 @@ import { Type } from '@mariozechner/pi-ai'
 import type { AgentTool } from '@mariozechner/pi-agent-core'
 import type { ToolContext } from '../types'
 import * as workerManager from '../../../worker/workerManager'
-import { isChineseLocale, formatMessageCompact } from '../utils/format'
+import { isChineseLocale } from '../utils/format'
 
 const schema = Type.Object({
   session_id: Type.Number({ description: 'ai.tools.get_session_messages.params.session_id' }),
@@ -38,7 +38,7 @@ export function createTool(context: ToolContext): AgentTool<typeof schema> {
           messageCount: result.messageCount,
           returnedCount: result.returnedCount,
           participants: result.participants,
-          messages: result.messages.map((m) => formatMessageCompact(m, locale)),
+          rawMessages: result.messages,
         }
       }
 
