@@ -28,14 +28,18 @@ async function llmComplete(
   const piModel = buildPiModel(activeConfig)
   const now = Date.now()
 
-  const result = await completeSimple(piModel, {
-    systemPrompt,
-    messages: [{ role: 'user', content: userPrompt, timestamp: now }],
-  }, {
-    apiKey: activeConfig.apiKey,
-    temperature: options?.temperature,
-    maxTokens: options?.maxTokens,
-  })
+  const result = await completeSimple(
+    piModel,
+    {
+      systemPrompt,
+      messages: [{ role: 'user', content: userPrompt, timestamp: now }],
+    },
+    {
+      apiKey: activeConfig.apiKey,
+      temperature: options?.temperature,
+      maxTokens: options?.maxTokens,
+    }
+  )
 
   return result.content
     .filter((item): item is PiTextContent => item.type === 'text')
@@ -438,11 +442,10 @@ export async function generateSessionSummary(
  * 直接生成摘要（适用于短会话）
  */
 async function generateDirectSummary(content: string, lengthLimit: number, locale: string): Promise<string> {
-  const result = await llmComplete(
-    t('summary.systemPromptDirect'),
-    buildSummaryPrompt(content, lengthLimit, locale),
-    { temperature: 0.3, maxTokens: 300 }
-  )
+  const result = await llmComplete(t('summary.systemPromptDirect'), buildSummaryPrompt(content, lengthLimit, locale), {
+    temperature: 0.3,
+    maxTokens: 300,
+  })
   return result.trim()
 }
 
@@ -462,11 +465,10 @@ async function generateMapReduceSummary(
 
   for (let i = 0; i < segments.length; i++) {
     const segmentContent = formatMessages(segments[i])
-    const result = await llmComplete(
-      t('summary.systemPromptDirect'),
-      buildSubSummaryPrompt(segmentContent, locale),
-      { temperature: 0.3, maxTokens: 100 }
-    )
+    const result = await llmComplete(t('summary.systemPromptDirect'), buildSubSummaryPrompt(segmentContent, locale), {
+      temperature: 0.3,
+      maxTokens: 100,
+    })
     subSummaries.push(result.trim())
   }
 

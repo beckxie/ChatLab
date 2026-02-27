@@ -7,20 +7,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { getAiDataDir } from '../../paths'
-import type {
-  LLMProvider,
-  ProviderInfo,
-  AIServiceConfig,
-  AIConfigStore,
-} from './types'
+import type { LLMProvider, ProviderInfo, AIServiceConfig, AIConfigStore } from './types'
 import { MAX_CONFIG_COUNT } from './types'
 import { aiLogger } from '../logger'
 import { encryptApiKey, decryptApiKey, isEncrypted } from './crypto'
 import { t } from '../../i18n'
-import {
-  completeSimple,
-  type Model as PiModel,
-} from '@mariozechner/pi-ai'
+import { completeSimple, type Model as PiModel } from '@mariozechner/pi-ai'
 
 // 导出类型
 export * from './types'
@@ -456,9 +448,7 @@ export function getProviderInfo(provider: LLMProvider): ProviderInfo | null {
 /**
  * 将 AIServiceConfig 转换为 pi-ai Model 对象
  */
-export function buildPiModel(
-  config: AIServiceConfig
-): PiModel<'openai-completions'> | PiModel<'google-generative-ai'> {
+export function buildPiModel(config: AIServiceConfig): PiModel<'openai-completions'> | PiModel<'google-generative-ai'> {
   const providerInfo = getProviderInfo(config.provider)
   const baseUrl = config.baseUrl || providerInfo?.defaultBaseUrl || ''
   const modelId = config.model || providerInfo?.models?.[0]?.id || ''
@@ -523,13 +513,17 @@ export async function validateApiKey(
     const timeout = setTimeout(() => abortController.abort(), 15000)
 
     try {
-      await completeSimple(piModel, {
-        messages: [{ role: 'user', content: 'Hi', timestamp: Date.now() }],
-      }, {
-        apiKey,
-        maxTokens: 1,
-        signal: abortController.signal,
-      })
+      await completeSimple(
+        piModel,
+        {
+          messages: [{ role: 'user', content: 'Hi', timestamp: Date.now() }],
+        },
+        {
+          apiKey,
+          maxTokens: 1,
+          signal: abortController.signal,
+        }
+      )
       return { success: true }
     } finally {
       clearTimeout(timeout)

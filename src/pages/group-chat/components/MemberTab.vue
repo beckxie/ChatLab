@@ -47,11 +47,7 @@ function handleDataChanged() {
     <div class="flex-1 min-h-0 overflow-auto">
       <Transition name="fade" mode="out-in">
         <!-- 成员列表 -->
-        <MemberList
-          v-if="activeSubTab === 'list'"
-          :session-id="props.sessionId"
-          @data-changed="handleDataChanged"
-        />
+        <MemberList v-if="activeSubTab === 'list'" :session-id="props.sessionId" @data-changed="handleDataChanged" />
 
         <!-- 群关系 -->
         <Relationships

@@ -40,15 +40,19 @@ async function rewriteQuery(query: string, abortSignal?: AbortSignal): Promise<s
     const piModel = buildPiModel(activeConfig)
     const prompt = QUERY_REWRITE_PROMPT.replace('{query}', query)
 
-    const result = await completeSimple(piModel, {
-      systemPrompt: '你是一个查询优化专家，专门将用户问题改写为更适合语义检索的形式。',
-      messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
-    }, {
-      apiKey: activeConfig.apiKey,
-      temperature: 0.3,
-      maxTokens: 200,
-      signal: abortSignal,
-    })
+    const result = await completeSimple(
+      piModel,
+      {
+        systemPrompt: '你是一个查询优化专家，专门将用户问题改写为更适合语义检索的形式。',
+        messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+      },
+      {
+        apiKey: activeConfig.apiKey,
+        temperature: 0.3,
+        maxTokens: 200,
+        signal: abortSignal,
+      }
+    )
 
     const rewritten = result.content
       .filter((item): item is PiTextContent => item.type === 'text')
