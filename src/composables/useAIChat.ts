@@ -7,6 +7,7 @@ import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePromptStore } from '@/stores/prompt'
 import { useSessionStore } from '@/stores/session'
+import { useSettingsStore } from '@/stores/settings'
 import type { TokenUsage, AgentRuntimeStatus } from '@electron/shared/types'
 
 // 工具调用记录
@@ -91,6 +92,7 @@ export function useAIChat(
   // 获取 chat store 中的提示词配置和全局设置
   const promptStore = usePromptStore()
   const sessionStore = useSessionStore()
+  const settingsStore = useSettingsStore()
   const { activePreset, aiGlobalSettings } = storeToRefs(promptStore)
 
   // 获取当前聊天类型对应的提示词配置（使用统一的激活预设）
@@ -371,6 +373,30 @@ export function useAIChat(
 
       const maxHistoryRounds = aiGlobalSettings.value.maxHistoryRounds ?? 5
 
+      const preprocessConfig = settingsStore.aiPreprocessConfig
+      const hasPreprocess =
+        preprocessConfig.dataCleaning ||
+        preprocessConfig.mergeConsecutive ||
+        preprocessConfig.blacklistKeywords.length > 0 ||
+        preprocessConfig.denoise ||
+        preprocessConfig.desensitize ||
+        preprocessConfig.anonymizeNames
+
+      // 重要：IPC 使用 structured clone，不能传递 Pinia/Vue 响应式对象（Proxy）
+      // blacklistKeywords 必须转为普通数组，否则会触发 “An object could not be cloned.”
+      const serializablePreprocessConfig = hasPreprocess
+        ? {
+            dataCleaning: preprocessConfig.dataCleaning,
+            mergeConsecutive: preprocessConfig.mergeConsecutive,
+            mergeWindowSeconds: preprocessConfig.mergeWindowSeconds,
+            blacklistKeywords: [...preprocessConfig.blacklistKeywords],
+            denoise: preprocessConfig.denoise,
+            desensitize: preprocessConfig.desensitize,
+            desensitizeRules: preprocessConfig.desensitizeRules.map((r) => ({ ...r, locales: [...r.locales] })),
+            anonymizeNames: preprocessConfig.anonymizeNames,
+          }
+        : undefined
+
       const context = {
         sessionId,
         conversationId: currentConversationId.value,
@@ -379,6 +405,7 @@ export function useAIChat(
         ownerInfo: ownerInfo.value
           ? { platformId: ownerInfo.value.platformId, displayName: ownerInfo.value.displayName }
           : undefined,
+        preprocessConfig: serializablePreprocessConfig,
       }
 
       console.log('[AI] 调用 Agent API...', {

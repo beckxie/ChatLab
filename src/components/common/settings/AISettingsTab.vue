@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import AIModelConfigTab from './AI/AIModelConfigTab.vue'
 import AIPromptConfigTab from './AI/AIPromptConfigTab.vue'
 import AIPromptPresetTab from './AI/AIPromptPresetTab.vue'
+import AIPreprocessTab from './AI/AIPreprocessTab.vue'
 // TODO: 向量模型暂时隐藏，待功能完善后恢复
 // import RAGConfigTab from './AI/RAGConfigTab.vue'
 import SubTabs from '@/components/UI/SubTabs.vue'
@@ -22,6 +23,7 @@ const navItems = computed(() => [
   // TODO: 向量模型暂时隐藏，待功能完善后恢复
   // { id: 'rag', label: t('settings.tabs.aiRAG') },
   { id: 'chat', label: t('settings.tabs.aiPrompt') },
+  { id: 'preprocess', label: t('settings.tabs.aiPreprocess') },
   { id: 'preset', label: t('settings.tabs.aiPreset') },
 ])
 
@@ -80,6 +82,14 @@ void aiModelConfigRef.value
         <!-- 对话配置 -->
         <div :ref="(el) => setSectionRef('chat', el as HTMLElement)">
           <AIPromptConfigTab @config-changed="handleAIConfigChanged" />
+        </div>
+
+        <!-- 分隔线 -->
+        <div class="border-t border-gray-200 dark:border-gray-700" />
+
+        <!-- 预处理配置 -->
+        <div :ref="(el) => setSectionRef('preprocess', el as HTMLElement)">
+          <AIPreprocessTab />
         </div>
 
         <!-- 分隔线 -->
