@@ -8,12 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@ai-sdk/google':
-        specifier: ^3.0.10
-        version: 3.0.22(zod@4.3.6)
-      '@ai-sdk/openai':
-        specifier: ^3.0.12
-        version: 3.0.26(zod@4.3.6)
       '@aptabase/electron':
         specifier: ^0.3.1
         version: 0.3.1(electron@35.7.5)
@@ -41,9 +35,6 @@ importers:
       '@zumer/snapdom':
         specifier: ^2.0.1
         version: 2.0.2
-      ai:
-        specifier: ^6.0.41
-        version: 6.0.77(zod@4.3.6)
       better-sqlite3:
         specifier: ^12.4.6
         version: 12.6.2
