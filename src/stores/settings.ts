@@ -54,8 +54,10 @@ export const useSettingsStore = defineStore(
 
       window.electron?.ipcRenderer.send('locale:change', newLocale)
 
+      // Vue 响应式 Proxy 无法通过 Electron IPC structured clone，需转为普通对象
+      const plainRules = JSON.parse(JSON.stringify(aiPreprocessConfig.value.desensitizeRules))
       aiPreprocessConfig.value.desensitizeRules = await window.aiApi.mergeDesensitizeRules(
-        aiPreprocessConfig.value.desensitizeRules,
+        plainRules,
         newLocale
       )
     }

@@ -333,7 +333,7 @@
     "desensitizeRuleAdd": "添加",
     "desensitizeRuleInvalidRegex": "正则表达式语法错误",
     "desensitizeRuleNamePlaceholder": "例如：员工工号",
-    "desensitizeRulePatternPlaceholder": "例如：EMP-\\d{4,6}",
+    "desensitizeRulePatternPlaceholder": "例如：EMP-\\d+",
     "desensitizeRuleReplacementPlaceholder": "替换文本，如 [工号]",
     "anonymizeNames": "昵称匿名化",
     "anonymizeNamesDesc": "用编号（U1、U2…）替代真实昵称发送给 AI，减少幻觉并节省 Token",

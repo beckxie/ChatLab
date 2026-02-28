@@ -333,7 +333,7 @@
     "desensitizeRuleAdd": "Add",
     "desensitizeRuleInvalidRegex": "Invalid regex syntax",
     "desensitizeRuleNamePlaceholder": "e.g. Employee ID",
-    "desensitizeRulePatternPlaceholder": "e.g. EMP-\\d{4,6}",
+    "desensitizeRulePatternPlaceholder": "e.g. EMP-\\d+",
     "desensitizeRuleReplacementPlaceholder": "Replacement, e.g. [EmpID]",
     "anonymizeNames": "Anonymize Nicknames",
     "anonymizeNamesDesc": "Replace real nicknames with IDs (U1, U2…) when sending to AI, reducing hallucinations and saving tokens",
