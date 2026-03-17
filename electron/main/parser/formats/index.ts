@@ -19,6 +19,7 @@ import whatsappNativeTxt from './whatsapp-native-txt'
 import qqNativeTxt from './qq-native-txt'
 import instagramNative from './instagram-native'
 import lineNativeTxt from './line-native-txt'
+import skypeNative from './skype-native'
 
 /**
  * 所有支持的格式模块（按优先级排序）
@@ -32,6 +33,7 @@ export const formats: FormatModule[] = [
   tyrrrzDiscordExporter, // 优先级 20 - Tyrrrz/DiscordChatExporter
   telegramNative, // 优先级 22 - Telegram 官方全量导出 JSON
   telegramNativeSingle, // 优先级 23 - Telegram 单聊天导出 JSON
+  skypeNative, // 优先级 24 - Skype 官方导出 JSON
   instagramNative, // 优先级 25 - Instagram 官方导出
   whatsappNativeTxt, // 优先级 26 - WhatsApp 官方导出 TXT
   qqNativeTxt, // 优先级 30 - QQ 官方导出 TXT
@@ -51,6 +53,7 @@ export {
   tyrrrzDiscordExporter,
   telegramNative,
   telegramNativeSingle,
+  skypeNative,
   instagramNative,
   whatsappNativeTxt,
   qqNativeTxt,

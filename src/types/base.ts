@@ -101,6 +101,7 @@ export const KNOWN_PLATFORMS = {
   TELEGRAM: 'telegram',
   INSTAGRAM: 'instagram',
   LINE: 'line',
+  SKYPE: 'skype',
   UNKNOWN: 'unknown',
 } as const
 

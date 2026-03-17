@@ -169,6 +169,7 @@ const PLATFORM_CONFIG: Record<string, { label: string; class: string }> = {
   },
   instagram: { label: 'Instagram', class: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' },
   line: { label: 'LINE', class: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-300' },
+  skype: { label: 'Skype', class: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300' },
   unknown: { label: '未知', class: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
 }
 

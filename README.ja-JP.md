@@ -12,7 +12,7 @@ AI Agent でチャット履歴をローカル分析し、あなたのソーシ�
 
 ChatLab は、チャット履歴を深く理解するためのローカル完結型アプリです。AI Agent と柔軟な SQL エンジンを組み合わせることで、会話データを自由に調べ、分解し、新しい視点で読み解けます。
 
-現在対応：WhatsApp、LINE、QQ、Discord、Instagram、Telegram。今後対応予定：iMessage、Messenger、KakaoTalk。
+現在対応：WhatsApp、LINE、QQ、Discord、Instagram、Skype、Telegram。今後対応予定：iMessage、Messenger、KakaoTalk。
 
 ## 主な機能
 

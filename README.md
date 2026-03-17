@@ -12,7 +12,7 @@ English | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) 
 
 ChatLab is an open-source desktop app for understanding your social conversations. It combines a flexible SQL engine with AI agents so you can explore patterns, ask better questions, and extract insights from chat data, all on your own machine.
 
-Currently supported: **WhatsApp, LINE, WeChat, QQ, Discord, Instagram, and Telegram**. Coming next: **iMessage, Messenger, and KakaoTalk**.
+Currently supported: **WhatsApp, LINE, WeChat, QQ, Discord, Instagram, Skype, and Telegram**. Coming next: **iMessage, Messenger, and KakaoTalk**.
 
 ## Core Features
 

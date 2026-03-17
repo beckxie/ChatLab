@@ -12,7 +12,7 @@
 
 ChatLab 是一款專注於社交記錄分析的本機應用。結合 AI Agent 與靈活的 SQL 引擎，你可以更自由地拆解、查詢，甚至重新理解自己的聊天資料。
 
-目前已支援：WhatsApp、LINE、QQ、Discord、Instagram、Telegram 的聊天記錄分析；即將支援：iMessage、Messenger、KakaoTalk。
+目前已支援：WhatsApp、LINE、QQ、Discord、Instagram、Skype、Telegram 的聊天記錄分析；即將支援：iMessage、Messenger、KakaoTalk。
 
 ## 核心特色
 
